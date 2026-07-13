@@ -1,17 +1,56 @@
 """
-Класс для отправки системных уведомлений на Mac
+Системные уведомления на Mac через osascript (AppleScript).
+
+Экранирование: AppleScript string-литералы ломаются на встроенных кавычках
+и бэкслешах — v2 подставлял title/message в f-строку без экранирования
+(баг). Порядок важен: сперва бэкслеши, потом кавычки — иначе кавычка,
+добавленная экранированием бэкслеша, сама попала бы под второй replace.
 """
 import logging
 import subprocess
-from pathlib import Path
+from typing import Optional
 
 from daemon.session import Session
 
 logger = logging.getLogger(__name__)
 
 
+def _escape_applescript(s: str) -> str:
+    """Экранировать строку для подстановки в AppleScript string-литерал."""
+    return s.replace('\\', '\\\\').replace('"', '\\"')
+
+
+def notify(title: str, message: str, subtitle: Optional[str] = None) -> bool:
+    """Показать системное уведомление (display notification) через osascript.
+
+    Общая точка входа для всех предохранителей (duration-limit/disk-guard/
+    silence) и для Notifier-методов ниже — единственное место, где строится
+    osascript-скрипт, поэтому единственное место, где нужно экранировать.
+
+    Возвращает True при успешном вызове osascript, False при ошибке/таймауте.
+    """
+    t = _escape_applescript(title)
+    m = _escape_applescript(message)
+    script = f'display notification "{m}" with title "{t}"'
+    if subtitle is not None:
+        script += f' subtitle "{_escape_applescript(subtitle)}"'
+
+    try:
+        subprocess.run(
+            ["osascript", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления: {e}")
+        return False
+
+
 class Notifier:
-    """Система уведомлений для Mac через osascript"""
+    """Уведомления, завязанные на Session (диалоги встреч, статусы)."""
 
     @staticmethod
     def notify_upcoming(session: Session) -> bool:
@@ -26,10 +65,11 @@ class Notifier:
         """
         start_time = session.start_time.strftime('%H:%M')
         title = session.title[:50]  # Обрезаем длинные названия
+        body = _escape_applescript(f"Встреча '{title}' начинается в {start_time}")
 
         # AppleScript для диалога с двумя кнопками
         script = f"""
-        display dialog "Встреча '{title}' начинается в {start_time}" \\
+        display dialog "{body}" \\
             buttons {{"ГО", "ОТМЕН"}} \\
             default button 1 \\
             with icon caution
@@ -90,15 +130,7 @@ class Notifier:
         Args:
             session: Объект сессии
         """
-        script = f"""
-        display notification "Запись встречи '{session.title}' началась" \\
-            with title "MeetMind"
-        """
-
-        try:
-            subprocess.run(['osascript', '-e', script], check=True)
-        except Exception as e:
-            logger.error(f'Ошибка при отправке уведомления: {e}')
+        notify(title="MeetMind", message=f"Запись встречи '{session.title}' началась")
 
     @staticmethod
     def notify_processing(session: Session):
@@ -108,15 +140,7 @@ class Notifier:
         Args:
             session: Объект сессии
         """
-        script = f"""
-        display notification "Обработка встречи '{session.title}'..." \\
-            with title "MeetMind"
-        """
-
-        try:
-            subprocess.run(['osascript', '-e', script], check=True)
-        except Exception as e:
-            logger.error(f'Ошибка при отправке уведомления: {e}')
+        notify(title="MeetMind", message=f"Обработка встречи '{session.title}'...")
 
     @staticmethod
     def notify_done(session: Session):
@@ -126,13 +150,8 @@ class Notifier:
         Args:
             session: Объект сессии
         """
-        script = f"""
-        display notification "Фоллоу-ап готов для '{session.title}'" \\
-            with title "MeetMind" \\
-            subtitle "Отправлено в Telegram"
-        """
-
-        try:
-            subprocess.run(['osascript', '-e', script], check=True)
-        except Exception as e:
-            logger.error(f'Ошибка при отправке уведомления: {e}')
+        notify(
+            title="MeetMind",
+            message=f"Фоллоу-ап готов для '{session.title}'",
+            subtitle="Отправлено в Telegram",
+        )
