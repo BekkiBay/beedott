@@ -1,175 +1,228 @@
 """
-Запись аудио с macOS — Aggregate Device, BlackHole, или системный микрофон.
+Потоковая запись аудио с macOS — Aggregate Device, BlackHole, или системный микрофон.
 
-Fallback chain:
+Fallback chain выбора устройства (см. pick_device()):
     1) AGGREGATE_DEVICE_NAME (например "MeetMind In" — связка BlackHole+мик)
     2) BlackHole 2ch (только системный звук, мик не пишется)
     3) Системный микрофон по умолчанию (мик есть, системного звука нет)
 
-Если первое в цепочке не нашлось — переходим к следующему и логируем warning.
+Если первое в цепочке не нашлось — переходим к следующему и логируем warning
+с указанием, какой путь выбран.
+
+Realtime-safety: аудио-callback НЕ делает дисковый I/O (задержка диска —
+Spotlight, Time Machine — дала бы overrun и потерю сэмплов). Callback только
+кладёт копию буфера в queue.Queue; отдельный поток-писатель читает из очереди
+и пишет в soundfile.SoundFile (PCM_16).
 """
 import logging
+import queue
 import threading
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import sounddevice as sd
-from scipy.io import wavfile
+import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
+AGGREGATE_DEVICE_NAME = "MeetMind In"
+BLACKHOLE_DEVICE_NAME = "BlackHole 2ch"
 
-class AudioRecorder:
-    """Запись аудио с приоритетным выбором устройства."""
+
+def _find_input_device(devices, name_substring: str):
+    needle = name_substring.lower().strip()
+    for i, d in enumerate(devices):
+        name = (d.get("name") or "").lower()
+        if needle in name and int(d.get("max_input_channels") or 0) > 0:
+            return i, d
+    return None
+
+
+def pick_device(
+    aggregate_name: str = AGGREGATE_DEVICE_NAME,
+    blackhole_name: str = BLACKHOLE_DEVICE_NAME,
+) -> tuple[int, str, int]:
+    """Выбрать входное устройство по fallback chain.
+
+    Возвращает (device_index, device_name, max_input_channels).
+    Логирует, какой путь в цепочке был выбран.
+    """
+    try:
+        devices = sd.query_devices()
+    except Exception as e:
+        logger.error(f"Не могу получить список аудио-устройств: {e}")
+        raise RuntimeError("Не могу получить список аудио-устройств") from e
+
+    # 1) Aggregate device — приоритет
+    agg = _find_input_device(devices, aggregate_name)
+    if agg is not None:
+        idx, dev = agg
+        ch = int(dev.get("max_input_channels") or 0)
+        logger.info(
+            f"🎙️ pick_device: Aggregate найден — «{dev['name']}» "
+            f"(id={idx}, max_input_channels={ch})"
+        )
+        return idx, dev["name"], ch
+
+    # 2) BlackHole — только системный звук
+    bh = _find_input_device(devices, blackhole_name)
+    if bh is not None:
+        idx, dev = bh
+        ch = int(dev.get("max_input_channels") or 0)
+        logger.warning(
+            f"⚠️  pick_device: Aggregate «{aggregate_name}» не найден, использую "
+            f"BlackHole «{dev['name']}» (id={idx}) — будет писаться ТОЛЬКО "
+            f"системный звук, без микрофона. Создай Aggregate Device в Audio MIDI "
+            f"Setup чтобы захватывать оба."
+        )
+        return idx, dev["name"], ch
+
+    # 3) Дефолтный микрофон
+    try:
+        default_in = sd.default.device[0]
+        if default_in is None or default_in < 0:
+            raise RuntimeError("default input device не задан")
+        dev = devices[default_in]
+        ch = int(dev.get("max_input_channels") or 0)
+        logger.warning(
+            f"⚠️  pick_device: ни Aggregate, ни BlackHole не найдены — пишу с "
+            f"дефолтного микрофона «{dev['name']}» (id={default_in}). Установи "
+            f"BlackHole для записи системного звука: brew install blackhole-2ch"
+        )
+        return default_in, dev["name"], ch
+    except Exception as e:
+        logger.error(f"Не могу определить дефолтное устройство записи: {e}")
+        raise RuntimeError("Нет рабочего устройства записи") from e
+
+
+class Recorder:
+    """Потоковая запись в WAV: callback -> queue -> writer-поток -> SoundFile."""
 
     def __init__(
         self,
-        aggregate_device_name: str = "MeetMind In",
-        blackhole_device_name: str = "BlackHole 2ch",
-        sample_rate: int = 16000,  # 16k достаточно для Whisper и в 3× меньше файл
+        out_path,
+        device: Optional[int] = None,
+        samplerate: int = 16000,
+        channels: int = 2,
     ):
-        self.aggregate_name = aggregate_device_name
-        self.blackhole_name = blackhole_device_name
-        self.sample_rate = sample_rate
+        self.out_path = Path(out_path)
+        self.device = device
+        self.samplerate = samplerate
+        self.channels = channels
 
-        self.device_id, self.device_label, self.channels = self._pick_device()
+        self._q: "queue.Queue" = queue.Queue()
+        self._stream: Optional[sd.InputStream] = None
+        self._writer: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._write_error: Optional[Exception] = None
 
-        self.is_recording = False
-        self.audio_data: list[np.ndarray] = []
-        self.audio_file: Optional[Path] = None
-        self.recording_thread: Optional[threading.Thread] = None
+    def _callback(self, indata, frames, time_info, status):
+        if status:
+            logger.debug(f"audio status: {status}")
+        # копируем во избежание гонок — исходный буфер переиспользуется PortAudio
+        self._q.put_nowait(indata.copy())
 
-    # ----------------------------- выбор устройства ----------------------------
-
-    def _pick_device(self) -> tuple[int, str, int]:
-        """Выбрать устройство по fallback chain. Возвращает (id, label, channels)."""
+    def _write_loop(self):
         try:
-            devices = sd.query_devices()
+            with sf.SoundFile(
+                str(self.out_path),
+                mode="w",
+                samplerate=self.samplerate,
+                channels=self.channels,
+                subtype="PCM_16",
+            ) as f:
+                while not (self._stop.is_set() and self._q.empty()):
+                    try:
+                        f.write(self._q.get(timeout=0.5))
+                    except queue.Empty:
+                        continue
         except Exception as e:
-            logger.error(f"Не могу получить список аудио-устройств: {e}")
-            return (-1, "none", 1)
+            self._write_error = e
+            logger.error(f"Ошибка записи в файл {self.out_path}: {e}", exc_info=True)
 
-        # 1) Aggregate device — приоритет
-        agg = self._find_input_device(devices, self.aggregate_name)
-        if agg is not None:
-            idx, dev = agg
-            ch = max(1, min(int(dev.get("max_input_channels", 2) or 2), 2))
-            logger.info(
-                f"🎙️ Aggregate device найден: «{dev['name']}» (id={idx}, channels={ch})"
-            )
-            return (idx, dev["name"], ch)
+    def _resolve_device_and_channels(self) -> None:
+        """Выбрать устройство (если не задано явно) и деградировать channels
+        до максимума, поддерживаемого устройством, если нужно."""
+        if self.device is None:
+            idx, label, max_ch = pick_device()
+            self.device = idx
+        else:
+            idx = self.device
+            try:
+                dev_info = sd.query_devices(idx)
+                label = dev_info.get("name", str(idx))
+                max_ch = int(dev_info.get("max_input_channels") or 0)
+            except Exception as e:
+                logger.warning(
+                    f"Recorder: не удалось получить информацию об устройстве "
+                    f"{idx}: {e} — использую как есть."
+                )
+                label, max_ch = str(idx), self.channels
 
-        # 2) BlackHole — только системный звук
-        bh = self._find_input_device(devices, self.blackhole_name)
-        if bh is not None:
-            idx, dev = bh
-            ch = max(1, min(int(dev.get("max_input_channels", 2) or 2), 2))
+        if 0 < max_ch < self.channels:
             logger.warning(
-                f"⚠️  Aggregate «{self.aggregate_name}» не найден, использую "
-                f"BlackHole — будет писаться ТОЛЬКО системный звук, без микрофона. "
-                f"Создай Aggregate Device в Audio MIDI Setup чтобы захватывать оба."
+                f"⚠️  Recorder: устройство «{label}» поддерживает только "
+                f"{max_ch} канал(ов), запрошено {self.channels} — деградирую "
+                f"до {max_ch}."
             )
-            return (idx, dev["name"], ch)
-
-        # 3) Дефолтный микрофон
-        try:
-            default_in = sd.default.device[0]
-            dev = devices[default_in]
-            ch = max(1, min(int(dev.get("max_input_channels", 1) or 1), 2))
-            logger.warning(
-                f"⚠️  Ни Aggregate, ни BlackHole не найдены — пишу с дефолтного "
-                f"микрофона «{dev['name']}». Установи BlackHole для записи "
-                f"системного звука: brew install blackhole-2ch"
-            )
-            return (default_in, dev["name"], ch)
-        except Exception as e:
-            logger.error(f"Не могу определить дефолтное устройство: {e}")
-            return (-1, "none", 1)
-
-    @staticmethod
-    def _find_input_device(devices, name_substring: str):
-        needle = name_substring.lower().strip()
-        for i, d in enumerate(devices):
-            name = (d.get("name") or "").lower()
-            if needle in name and int(d.get("max_input_channels") or 0) > 0:
-                return i, d
-        return None
-
-    # ----------------------------- API записи -----------------------------------
-
-    def start(self, session_id: str, output_dir: Path) -> str:
-        if self.is_recording:
-            logger.warning("Запись уже идёт")
-            return ""
-
-        if self.device_id < 0:
-            logger.error("Нет рабочего устройства записи")
-            return ""
-
-        output_dir.mkdir(parents=True, exist_ok=True)
-        self.audio_file = output_dir / f"{session_id}.wav"
-        self.audio_data = []
-        self.is_recording = True
+            self.channels = max_ch
 
         logger.info(
-            f"▶️  Старт записи: device={self.device_label}, "
-            f"rate={self.sample_rate}Hz, ch={self.channels}, → {self.audio_file}"
+            f"▶️  Recorder.start: device=«{label}» (id={self.device}), "
+            f"samplerate={self.samplerate}Hz, channels={self.channels} → "
+            f"{self.out_path}"
         )
 
-        self.recording_thread = threading.Thread(target=self._record_loop, daemon=True)
-        self.recording_thread.start()
-        return str(self.audio_file)
+    def start(self) -> str:
+        """Разрешить устройство, запустить writer-поток и InputStream.
+        Возвращает путь к файлу записи (доступен сразу)."""
+        self._resolve_device_and_channels()
 
-    def _record_loop(self):
-        try:
-            def cb(indata, frames, time_info, status):
-                if status:
-                    logger.debug(f"audio status: {status}")
-                # копируем во избежание гонок при дозаписи
-                self.audio_data.append(indata.copy())
+        self.out_path.parent.mkdir(parents=True, exist_ok=True)
+        self._stop.clear()
+        self._write_error = None
 
-            with sd.InputStream(
-                device=self.device_id,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                callback=cb,
-                blocksize=2048,
-                dtype="float32",
-            ):
-                while self.is_recording:
-                    sd.sleep(100)
-        except Exception as e:
-            logger.error(f"Ошибка записи: {e}", exc_info=True)
-            self.is_recording = False
+        self._writer = threading.Thread(target=self._write_loop, daemon=True)
+        self._writer.start()
+
+        self._stream = sd.InputStream(
+            device=self.device,
+            samplerate=self.samplerate,
+            channels=self.channels,
+            callback=self._callback,
+        )
+        self._stream.start()
+        return str(self.out_path)
 
     def stop(self) -> Optional[str]:
-        if not self.is_recording:
-            return None
+        """Остановить поток захвата, дождаться writer-потока и закрыть файл."""
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception as e:
+                logger.error(f"Ошибка остановки InputStream: {e}", exc_info=True)
+            finally:
+                self._stream = None
 
-        self.is_recording = False
-        if self.recording_thread:
-            self.recording_thread.join(timeout=5)
+        self._stop.set()
+        if self._writer is not None:
+            self._writer.join(timeout=10)
+            if self._writer.is_alive():
+                logger.error(
+                    "⏹️  Recorder.stop: writer-поток не завершился за 10с — "
+                    "файл может быть неполным"
+                )
+            self._writer = None
 
-        if not self.audio_data:
-            logger.warning("Нет аудио-данных для сохранения")
+        if self._write_error is not None:
+            logger.error(f"Recorder.stop: во время записи была ошибка: {self._write_error}")
             return None
 
         try:
-            audio = np.concatenate(self.audio_data, axis=0)
-            # mix в моно если многоканал — Whisper и так схлопывает,
-            # но так файл в 2 раза меньше
-            if audio.ndim > 1 and audio.shape[1] > 1:
-                audio = audio.mean(axis=1)
+            size_kb = self.out_path.stat().st_size / 1024
+            logger.info(f"⏹️  Recorder.stop: файл закрыт — {self.out_path} ({size_kb:.0f} KB)")
+        except OSError:
+            pass
 
-            audio_int16 = np.clip(audio * 32767.0, -32768, 32767).astype(np.int16)
-            wavfile.write(str(self.audio_file), self.sample_rate, audio_int16)
-            seconds = len(audio_int16) / self.sample_rate
-            logger.info(
-                f"⏹️  Запись остановлена: {self.audio_file} "
-                f"({seconds:.1f} сек, {self.audio_file.stat().st_size / 1024:.0f} KB)"
-            )
-            return str(self.audio_file)
-        except Exception as e:
-            logger.error(f"Ошибка сохранения аудио: {e}", exc_info=True)
-            return None
+        return str(self.out_path)
