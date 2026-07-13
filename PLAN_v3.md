@@ -999,6 +999,18 @@ def sweep(con, keep_days: int = 14) -> list[str]:
 
 Commit — `test(m2): crash-only checklist passed`
 
+> **M2 VERIFY ПРОЙДЕН 2026-07-13** (живые сценарии):
+> - kill -9 демона посреди обработки + рестарт → reconcile requeue → DELIVERED,
+>   доставки attempts=1, дублей в TG нет (сессия 3c2ce164f4f3);
+> - cancel во время записи → CANCELLED, session_dir удалён, TG молчит (126b515a6bce);
+> - авто-стоп `MEETMIND_MAX_RECORDING_SEC=12` → сам остановился на 12с → DELIVERED
+>   (3a715c60c45c);
+> - disk-full, silence, Ollama-autostart/model-missing, reprocess — юнит-тесты
+>   (123 passed); live-прогон Ollama-autostart невозможен: ollama на машине живёт
+>   как launchd-сервис и мгновенно респавнится.
+> Отложено: замер пика RSS ollama на Vikhr (модель не спулена) → сделать в M6
+> вместе с onboarding; wifi-off сценарий — при полевом использовании M5.
+
 ---
 
 ## M3 — Swift MenuBar Shell + ControlSocket (1.5-2 недели)
