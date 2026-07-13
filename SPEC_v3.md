@@ -114,7 +114,8 @@ DetectionEngine ловит confirmed-сигнал (процесс zoom.us/бра
 аудио-устройства; Accessibility-заголовок для meeting_id; ручной хоткей — всегда) →
 Swift вызывает `start_recording` по ControlSocket (строку `sessions(state=RECORDING)`
 пишет демон) и стартует CaptureEngine: Process Tap на
-PID + микрофон, стерео WAV чанками на диск (ch0=система, ch1=мик), REC горит.
+PID + микрофон, стерео WAV чанками на диск (**ch0=мик, ch1=система** — порядок
+зафиксирован реализацией CaptureEngine, M4), REC горит.
 По debounced-концу (смена/исчезновение meeting_id, стоп, лимит) — `state=RECORDED`,
 создаётся `pipeline_job(queued)`. PipelineDaemon забирает job: transcribe → (diarize) →
 summarize → deliver. `delivered_at` — только после подтверждения Telegram API.

@@ -24,6 +24,7 @@ class DaemonApp:
         self._lock = threading.Lock()
         self._recorder: Recorder | None = None
         self._active_sid: str | None = None
+        self._owner: str | None = None  # "daemon" | "app" — кто пишет audio.wav активной сессии
         self._tls = threading.local()  # sqlite-подключение на поток
 
     @property
@@ -37,8 +38,12 @@ class DaemonApp:
 
     def start_recording(self, params: dict) -> dict:
         with self._lock:
-            if self._recorder is not None:
+            if self._active_sid is not None:
                 raise ControlError("busy", f"уже идёт запись сессии {self._active_sid}")
+            owner = params.get("audio_path_owner") or "daemon"
+            if owner not in ("daemon", "app"):
+                raise ControlError(
+                    "bad_params", f"audio_path_owner: {owner!r} (ожидается daemon|app)")
             sid = db.create_session(
                 self._con,
                 source=params.get("source", "manual"),
@@ -46,6 +51,17 @@ class DaemonApp:
                 meeting_key=params.get("meeting_key"),
             )
             wav = session_dir(sid) / "audio.wav"
+
+            if owner == "app":
+                # Swift CaptureEngine пишет WAV сам (Process Tap, SPEC_v3 §6
+                # audio_path_owner=app) — демон только заводит сессию/каталог и
+                # возвращает путь, Python-Recorder не стартует.
+                db.set_state(self._con, sid, State.RECORDING, audio_path=str(wav))
+                self._recorder, self._active_sid, self._owner = None, sid, "app"
+                logger.info(
+                    "REC start (owner=app): %s (%s)", sid, params.get("title") or "без названия")
+                return {"session_id": sid, "audio_path": str(wav)}
+
             rec = Recorder(
                 out_path=wav,
                 on_autostop=lambda reason, _sid=sid: self._on_autostop(_sid, reason),
@@ -59,16 +75,22 @@ class DaemonApp:
                 shutil.rmtree(session_dir(sid), ignore_errors=True)
                 raise
             db.set_state(self._con, sid, State.RECORDING, audio_path=str(wav))
-            self._recorder, self._active_sid = rec, sid
+            self._recorder, self._active_sid, self._owner = rec, sid, "daemon"
             logger.info("REC start: %s (%s)", sid, params.get("title") or "без названия")
             return {"session_id": sid}
 
     def stop_recording(self, params: dict) -> dict:
         with self._lock:
             sid = params.get("session_id") or self._active_sid
-            if self._recorder is None or sid != self._active_sid:
+            if self._active_sid is None or sid != self._active_sid:
                 raise ControlError("no_active_session", "нет активной записи")
-            self._recorder.stop()
+            if self._owner == "daemon":
+                if self._recorder is None:
+                    raise ControlError("no_active_session", "нет активной записи")
+                self._recorder.stop()
+            # owner == "app": Swift CaptureEngine уже сам остановил и закрыл WAV
+            # (engine.stop() до stop_recording, см. app/Sources/MeetMind/MeetMindApp.swift)
+            # — Recorder тут нет и не было, просто финализируем сессию.
             self._finalize_recording(sid)
             return {"session_id": sid}
 
@@ -76,6 +98,7 @@ class DaemonApp:
         """Под self._lock. Закрывает запись и ставит транскрипцию в очередь."""
         self._recorder = None
         self._active_sid = None
+        self._owner = None
         db.set_state(self._con, sid, State.RECORDED, ended_at=db.now())
         db.enqueue_job(self._con, sid, "transcribe")
         logger.info("REC stop: %s -> очередь transcribe", sid)
@@ -95,10 +118,14 @@ class DaemonApp:
     def cancel_recording(self, params: dict) -> dict:
         with self._lock:
             sid = params.get("session_id") or self._active_sid
-            if sid == self._active_sid and self._recorder is not None:
-                self._recorder.stop()
+            if sid == self._active_sid and self._active_sid is not None:
+                # owner == "app": рекордера нет (Swift CaptureEngine уже остановлен
+                # вызывающим до cancel_recording) — только сбрасываем внутреннее состояние.
+                if self._owner == "daemon" and self._recorder is not None:
+                    self._recorder.stop()
                 self._recorder = None
                 self._active_sid = None
+                self._owner = None
             if sid is None:
                 raise ControlError("no_active_session", "нечего отменять")
             db.set_state(self._con, sid, State.CANCELLED)

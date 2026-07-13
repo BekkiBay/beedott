@@ -136,9 +136,12 @@ enum ControlClient {
 
     // ------------------------------------------------------------ обёртки
 
-    static func startRecording(title: String? = nil) throws -> [String: Any] {
+    /// audioPathOwner: "app" (Swift CaptureEngine пишет WAV сам, PLAN_v3 Task 4.1-4.2)
+    /// | "daemon" (Python Recorder, дефолт демона при nil) | nil.
+    static func startRecording(title: String? = nil, audioPathOwner: String? = nil) throws -> [String: Any] {
         var params: [String: Any] = [:]
         if let title, !title.isEmpty { params["title"] = title }
+        if let audioPathOwner { params["audio_path_owner"] = audioPathOwner }
         return try request("start_recording", params: params)
     }
 

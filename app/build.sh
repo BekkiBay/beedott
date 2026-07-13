@@ -31,7 +31,12 @@ echo "-- swiftc: ${#SOURCES[@]} файлов -> $MACOS_DIR/$BIN_NAME"
 # (напр. 28.0), и `open`/LaunchServices отказывается запускать бандл на системе
 # со СТАРШИМ номером сборки, но МЛАДШИМ major (kLSIncompatibleSystemVersionErr,
 # -10825) — обнаружено при верификации M3 на macOS 27.0 + Xcode 26.5 toolchain.
-swiftc -O -parse-as-library \
+#
+# БЕЗ -parse-as-library (начиная с Task 4.1-4.2): entry point — Sources/MeetMind/main.swift
+# (top-level код для headless --capture-test до запуска GUI). Файл main.swift
+# компилируется как top-level entry автоматически по имени; -parse-as-library
+# запрещает top-level код везде, включая main.swift, — проверено эмпирически.
+swiftc -O \
     -target arm64-apple-macosx14.4 \
     -o "$MACOS_DIR/$BIN_NAME" \
     "${SOURCES[@]}"

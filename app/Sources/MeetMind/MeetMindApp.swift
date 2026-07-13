@@ -1,4 +1,6 @@
-// MeetMindApp.swift — @main SwiftUI App, MenuBarExtra shell (PLAN_v3 Task 3.3).
+// MeetMindApp.swift — SwiftUI App, MenuBarExtra shell (PLAN_v3 Task 3.3).
+// Entry point (@main) живёт в main.swift, чтобы --capture-test мог отработать
+// headless до запуска GUI (PLAN_v3 Task 4.1-4.2).
 //
 // LSUIElement-приложение (без Dock, см. Info.plist). Иконка-emoji в меню-баре:
 // 🧠 idle / 🔴 recording / ⚠️ демон недоступен. Пункты: Start Recording (⌘⇧R),
@@ -8,6 +10,21 @@
 import SwiftUI
 import AppKit
 import Carbon
+
+// MARK: - NativeCaptureHolder
+
+/// Держатель активного CaptureEngine + owner активной записи (PLAN_v3 Task 4.1-4.2).
+/// Намеренно НЕ MainActor: читается/пишется только из AppModel.actionQueue (serial
+/// DispatchQueue), поэтому доступ уже сериализован порядком вызовов — не нужен ещё
+/// один слой синхронизации. Вынесен из AppModel, чтобы actionQueue-замыкания могли
+/// трогать его без прыжка на MainActor (AppModel сам — @MainActor).
+final class NativeCaptureHolder {
+    var engine: CaptureEngine?
+    /// "app" — активная запись пишется нативным CaptureEngine (Process Tap);
+    /// "daemon" — Python Recorder; используется как маркер вне активной записи тоже
+    /// (последнее известное значение), но реально осмыслен только пока recordingSessionId != nil.
+    var owner: String = "daemon"
+}
 
 // MARK: - AppModel
 
@@ -35,6 +52,10 @@ final class AppModel: ObservableObject {
     private var supervisorObserver: NSObjectProtocol?
     private let actionQueue = DispatchQueue(label: "com.jvmshid.meetmind.actions")
     private var started = false
+    // См. NativeCaptureHolder — намеренно не MainActor-изолирован, доступ только
+    // из actionQueue (сериализован порядком выполнения тем же способом, что и
+    // остальные действия record/stop/cancel в этом классе).
+    nonisolated(unsafe) private let capture = NativeCaptureHolder()
 
     private init() {}
 
@@ -140,9 +161,9 @@ final class AppModel: ObservableObject {
 
     // MARK: actions
 
-    func startRecording() { performAction { try ControlClient.startRecording() } }
-    func stopRecording() { performAction { try ControlClient.stopRecording() } }
-    func cancelRecording() { performAction { try ControlClient.cancelRecording() } }
+    func startRecording() { performAction { [weak self] in try self?.performStartRecording() } }
+    func stopRecording() { performAction { [weak self] in try self?.performStopRecording() } }
+    func cancelRecording() { performAction { [weak self] in try self?.performCancelRecording() } }
 
     func toggleRecording() {
         if recordingSessionId != nil {
@@ -152,13 +173,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func performAction(_ action: @escaping () throws -> [String: Any]) {
+    private func performAction(_ action: @escaping () throws -> Void) {
         guard !busy else { return }
         busy = true
         actionQueue.async { [weak self] in
             guard let self else { return }
             do {
-                _ = try action()
+                try action()
             } catch {
                 NSLog("MeetMind: действие не удалось — %@", error.localizedDescription)
             }
@@ -167,6 +188,87 @@ final class AppModel: ObservableObject {
                 self.refreshStatus()
             }
         }
+    }
+
+    // ------------------------------------------------------- capture path (PLAN_v3 Task 4.1-4.2)
+    // Всё ниже выполняется на actionQueue (НЕ MainActor) — см. performAction. Трогает
+    // только capture (NativeCaptureHolder, nonisolated(unsafe)) и ControlClient
+    // (свободные функции), никаких @Published MainActor-полей — их правит только
+    // performAction/refreshStatus после возврата на MainActor.
+
+    /// (a) Пробуем нативный Process Tap (CaptureEngine) на временный файл — если
+    /// AudioHardwareCreateProcessTap доступен (macOS ≥14.4, TCC ok), запись пойдёт
+    /// через Swift (audio_path_owner=app), демон не поднимает Python Recorder.
+    /// (b) CaptureError.tapUnavailable (или любая другая ошибка тапа) → вечный
+    /// fallback: audio_path_owner=daemon, Python Recorder как раньше (SPEC_v3 D1).
+    nonisolated private func performStartRecording() throws {
+        let probeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meetmind-tap-probe-\(UUID().uuidString).wav")
+        let probe = CaptureEngine()
+        do {
+            try probe.start(mode: .global, outURL: probeURL)
+            probe.stop()
+            try? FileManager.default.removeItem(at: probeURL)
+        } catch {
+            NSLog("MeetMind: CaptureEngine недоступен (%@) — fallback на daemon Recorder (audio_path_owner=daemon)",
+                  error.localizedDescription)
+            capture.owner = "daemon"
+            capture.engine = nil
+            _ = try ControlClient.startRecording(audioPathOwner: "daemon")
+            return
+        }
+
+        NSLog("MeetMind: Process Tap доступен — нативная запись (audio_path_owner=app)")
+        let result: [String: Any]
+        do {
+            result = try ControlClient.startRecording(audioPathOwner: "app")
+        } catch {
+            NSLog("MeetMind: start_recording(app) не удался (%@) — fallback на daemon Recorder",
+                  error.localizedDescription)
+            capture.owner = "daemon"
+            capture.engine = nil
+            _ = try ControlClient.startRecording(audioPathOwner: "daemon")
+            return
+        }
+        guard let audioPath = result["audio_path"] as? String else {
+            _ = try? ControlClient.cancelRecording()
+            throw ControlClientError.protocolError("start_recording(app): нет audio_path в ответе")
+        }
+        NSLog("MeetMind: нативный захват пишет в %@", audioPath)
+
+        let engine = CaptureEngine()
+        do {
+            try engine.start(mode: .global, outURL: URL(fileURLWithPath: audioPath))
+        } catch {
+            NSLog("MeetMind: engine.start(real audio_path) не удался (%@) — отменяю сессию у демона",
+                  error.localizedDescription)
+            _ = try? ControlClient.cancelRecording()
+            throw error
+        }
+        capture.engine = engine
+        capture.owner = "app"
+    }
+
+    /// Если писали сами (owner=app) — engine.stop() ДО stop_recording (файл должен
+    /// быть закрыт и дописан до того, как демон поставит транскрипцию в очередь).
+    nonisolated private func performStopRecording() throws {
+        if capture.owner == "app", let engine = capture.engine {
+            let frames = engine.stop()
+            NSLog("MeetMind: CaptureEngine.stop() — записано кадров: %llu", frames)
+            capture.engine = nil
+        }
+        defer { capture.owner = "daemon" }
+        _ = try ControlClient.stopRecording()
+    }
+
+    nonisolated private func performCancelRecording() throws {
+        if capture.owner == "app", let engine = capture.engine {
+            let frames = engine.stop()
+            NSLog("MeetMind: CaptureEngine.stop() (cancel) — записано кадров: %llu", frames)
+            capture.engine = nil
+        }
+        defer { capture.owner = "daemon" }
+        _ = try ControlClient.cancelRecording()
     }
 
     func openNotesFolder() {
@@ -225,7 +327,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - App
 
-@main
+// Без @main здесь: entry point — main.swift (top-level код нужен для
+// --capture-test до запуска GUI, PLAN_v3 Task 4.1-4.2 п.4), который вызывает
+// MeetMindApp.main() явно. См. app/build.sh — swiftc без -parse-as-library.
 struct MeetMindApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @ObservedObject private var model = AppModel.shared

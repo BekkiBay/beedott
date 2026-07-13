@@ -1085,10 +1085,11 @@ Commit — `test(m2): crash-only checklist passed`
 **Files:**
 - Create: `app/MeetMind/CaptureEngine.swift` (перенос кода из спайка 0.4)
 
-- [ ] По `start_recording` c meeting-контекстом Swift сам пишет WAV:
-  Process Tap (PID звонилки) → ch0; микрофон (AVAudioEngine) → ch1; единый стерео WAV
-  16kHz в `session_dir`. Путь передаётся демону в `start_recording.params.audio_path_owner="app"`
-  — Python-Recorder в этом режиме не стартует.
+- [x] По `start_recording` Swift сам пишет WAV: **микрофон → ch0; Process Tap → ch1**
+  (порядок зафиксирован реализацией: aggregate отдаёт buf[0]=mic mono, buf[1]=tap stereo);
+  единый стерео WAV 48kHz PCM16 в `session_dir`. Путь передаётся демону в
+  `start_recording.params.audio_path_owner="app"` — Python-Recorder в этом режиме
+  не стартует. Режимы: .global (ручная запись, весь системный звук) и .pid (для M5).
 - [ ] TCC: первый запуск запрашивает Microphone + System Audio Recording; онбординг-текст — в M6.
 - [ ] Acceptance: реальный Zoom-звонок → в WAV оба направления разговора, музыка из
   другого приложения отсутствует.
@@ -1199,7 +1200,8 @@ Commit — `test(m2): crash-only checklist passed`
 ### Task 7.1: Диаризация (неблокирующая)
 
 - [ ] `daemon/stages_diarize.py`: senko (первый кандидат — скорость) или
-  pyannote-segmentation-MLX + WeSpeaker; вход — стерео WAV (ch1=мик → «Я»),
+  pyannote-segmentation-MLX + WeSpeaker; вход — стерео WAV (**ch0=мик → «Я»**,
+  порядок каналов из M4 Task 4.1),
   выход — сегменты Speaker 1/2. Джоба ставится как **non-chain**
   (`db.enqueue_job(con, sid, "diarize", chain=0)`) после доставки: выполняется общим
   циклом оркестратора, но `sessions.state` НЕ трогает (сессия остаётся DELIVERED —
