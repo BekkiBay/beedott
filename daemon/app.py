@@ -23,7 +23,14 @@ class DaemonApp:
         self._lock = threading.Lock()
         self._recorder: Recorder | None = None
         self._active_sid: str | None = None
-        self._con = db.connect()  # подключение control-потока
+        self._tls = threading.local()  # sqlite-подключение на поток
+
+    @property
+    def _con(self):
+        con = getattr(self._tls, "con", None)
+        if con is None:
+            con = self._tls.con = db.connect()
+        return con
 
     # ------------------------------------------------------------- handlers
 

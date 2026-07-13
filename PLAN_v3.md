@@ -867,7 +867,17 @@ Expected: ≤3 мин спустя — сообщение в Telegram со ст�
 `sqlite3 "$APPDIR/meetmind.db" 'SELECT state FROM sessions'` → `DELIVERED`;
 заметка в `~/MeetMind/<дата>/`.
 
-- [ ] **Step 3: Commit** — `feat(m1): cli + daemon entrypoint, manual happy path works`
+- [x] **Step 3: Commit** — `feat(m1): cli + daemon entrypoint, manual happy path works`
+
+> **M1 VERIFY ПРОЙДЕН 2026-07-13** (сессия bb8d8a5dcb62): record start → 30-сек
+> реальная запись с мика → whisper-транскрипт (русский распознан) → Ollama-JSON →
+> DELIVERED; Telegram message_id=1966 + заметка ~/MeetMind/2026-07-13/. Заодно
+> отработал degraded-путь summarizer (gemma4-obliterated не держит схему → сырой
+> текст с warning) и восстановление после kill -9 посреди записи (ffmpeg
+> -ignore_length чинит нефинализированный WAV header) — вход для Task 2.6.
+> Примечания: control socket реализован уже в M1 (пре-делает часть Task 3.1);
+> Vikhr-модель ещё не спулена (e2e шёл на gemma4-obliterated через env);
+> memguard пороги переопределяются MEETMIND_MEMGUARD_GB_*.
 
 ---
 
