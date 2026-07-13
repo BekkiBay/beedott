@@ -1026,13 +1026,14 @@ Commit — `test(m2): crash-only checklist passed`
   `daemon/cli.py` (команды становятся socket-клиентом)
 - Test: `tests/test_control.py`
 
-- [ ] Тест: asyncio unix-сервер на `paths.socket_path()`; клиент шлёт
+- [x] Тест: asyncio unix-сервер на `paths.socket_path()`; клиент шлёт
   `{"id":1,"method":"status"}` → получает `{"id":1,"result":{...}}`; неизвестный метод →
   `{"error":{"code":"unknown_method"}}`. Методы — по таблице SPEC_v3 §6, маршрутизируются
   в те же функции, что CLI в M1.
-- [ ] Heartbeat: демон раз в 5 сек пишет notification-кадр `{"method":"heartbeat"}`
+- [x] Heartbeat: демон раз в 5 сек пишет notification-кадр `{"method":"heartbeat"}`
   всем подключённым клиентам.
-- [ ] Commit — `feat(m3): control socket json-rpc server, cli becomes client`
+- [x] Commit — **сделано досрочно в M1** (`3f956b9`): daemon/control.py + daemon/cli.py
+  как socket-клиент + tests/test_control.py. Нюанс: unix socket path ≤ ~104 байт (macOS).
 
 ### Task 3.2: Xcode-проект с фиксированной идентичностью
 
