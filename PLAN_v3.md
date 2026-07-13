@@ -1148,9 +1148,18 @@ Commit — `test(m2): crash-only checklist passed`
   из конфига); (4) Telegram: инструкция BotFather, поле token/chat_id, тест-пинг;
   (5) опционально Obsidian vault picker; (6) **если выбран fallback-захват** (нет
   Process Tap): установка BlackHole + программное создание Aggregate/Multi-Output
-  устройств из Task 0.5 — без единого захода в Audio MIDI Setup; (7) финал —
-  тестовая 15-сек запись → мини-фоллоу-ап. Конфиг пишется в `$APPDIR/config.env`
-  с `chmod 600` (SPEC D14) + тест на права файла.
+  устройств из Task 0.5 — без единого захода в Audio MIDI Setup; (7) **Claude Auth
+  (опционально, для бустера)**: probe `claude auth status` — exit 0 → предложить
+  «использовать текущий login» (keychain) ИЛИ «выделенный токен для демона»: визард
+  открывает терминал с `claude setup-token` (браузерный OAuth, токен на 1 год,
+  биллинг = Max-подписка), пользователь вставляет токен → `CLAUDE_CODE_OAUTH_TOKEN`
+  в config.env; exit 1 → подсказка `claude login` или «пропустить, только Ollama»;
+  (8) финал — тестовая 15-сек запись → мини-фоллоу-ап. Конфиг пишется в
+  `$APPDIR/config.env` с `chmod 600` (SPEC D14) + тест на права файла.
+- [ ] **M6 Verify (Claude Auth):** после включения token-режима проверить, что
+  интерактивный `claude` в терминале всё ещё авторизован (известный issue #37512 —
+  env-токен может удалять keychain-entry); прогнать booster-команду именно через
+  `launchctl kickstart` (issue #69173 — хэнги из launchd), не только из терминала.
 - [ ] Acceptance (M6 Verify): чистый macOS-аккаунт → до рабочего состояния ≤15 мин,
   ни одной команды в терминале.
 
@@ -1184,11 +1193,52 @@ Commit — `test(m2): crash-only checklist passed`
 
 ### Task 7.4: Claude-бустер (opt-in)
 
-- [ ] `daemon/claude_booster.py`: вызов `claude --print --model sonnet
-  --append-system-prompt <SYSTEM_PROMPT> --output-format text` (паттерн из
-  `test_one_meeting.sh:184-189`), вход — транскрипт + Ollama-JSON, выход — JSON той же
-  схемы; `validate_followup` обязателен; любой сбой/невалид → остаётся Ollama-версия,
-  в заметке пометка движка. Self-check версии CLI при старте демона.
+- [ ] `daemon/claude_auth.py` — авторизация по Claude Auth (SPEC D15):
+
+```python
+# daemon/claude_auth.py (ядро)
+"""Auth-обвязка для headless-вызовов claude CLI по Max-подписке.
+
+Факты (verified 2026-07, code.claude.com/docs):
+- CLAUDE_CODE_OAUTH_TOKEN: env var для headless -p; создаётся `claude setup-token`
+  (браузерный OAuth, живёт 1 год, биллинг = подписка, нужен Pro/Max).
+- Прецеденс: ANTHROPIC_AUTH_TOKEN > ANTHROPIC_API_KEY > apiKeyHelper >
+  CLAUDE_CODE_OAUTH_TOKEN > keychain (/login). В -p режиме API-ключ применяется
+  БЕЗ подтверждения → тихий биллинг API-кредитов. Поэтому чистим env.
+- --bare НЕ читает CLAUDE_CODE_OAUTH_TOKEN — не использовать с токеном.
+- launchd: минимальный PATH → вызывать claude по полному пути.
+"""
+import os, shutil, subprocess
+
+def claude_bin() -> str | None:
+    return os.environ.get("MEETMIND_CLAUDE_BIN") or shutil.which("claude")
+
+def claude_env(oauth_token: str | None) -> dict:
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    if oauth_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    return env
+
+def auth_ok(oauth_token: str | None) -> bool:
+    """Self-check при старте демона: exit 0 = залогинен."""
+    binp = claude_bin()
+    if not binp:
+        return False
+    r = subprocess.run([binp, "auth", "status"], env=claude_env(oauth_token),
+                       capture_output=True, timeout=30)
+    return r.returncode == 0
+```
+
+  Тесты (мок subprocess): env очищен от ANTHROPIC_*-ключей; токен инъектится;
+  auth_ok маппит exit code.
+- [ ] `daemon/claude_booster.py`: вызов `[claude_bin(), "--print", "--model", "sonnet",
+  "--append-system-prompt", SYSTEM_PROMPT, "--output-format", "text"]`
+  с `env=claude_env(token)` (паттерн из `test_one_meeting.sh:184-189`; БЕЗ `--bare`).
+  Вход — транскрипт + Ollama-JSON, выход — JSON той же схемы; `validate_followup`
+  обязателен; любой сбой/невалид/`auth_ok()==False` → остаётся Ollama-версия,
+  в заметке пометка движка; при auth-сбое — одно уведомление «Claude недоступен,
+  проверь claude login / setup-token», бустер отключается до рестарта.
   Включается: глобально в config, per-meeting через `/claude on` до конца встречи.
 - [ ] Commit-серия по задаче.
 

@@ -165,6 +165,7 @@ ControlSocket; читать БД напрямую им можно, писать 
 | D12 | Детект: **confirmed-signal** — процесс И занятость аудио-устройства; meeting_key=(app, meeting_id); debounce per meeting_id; EventKit только контекст; хоткей — гарантированный fallback | Один сигнал даёт ложные срабатывания (Zoom в фоне) и пропуски. Ключ по meeting_id решает «две встречи подряд» (воспроизведённый баг v2) |
 | D13 | Календарь — **EventKit** (локальный macOS Calendar, уже синхронизирован с Google), не Google OAuth | OAuth-флоу v2 интерактивен и несовместим с headless-демоном; EventKit не требует токенов и соответствует «локальному» позиционированию |
 | D14 | Секреты — в `~/Library/Application Support/MeetMind/config.env` (chmod 600), вне репозитория; `credentials.json` из v2 удаляется | Аудит нашёл живой Google OAuth secret в корне репо |
+| D15 | **Claude Auth** — авторизация бустера через Claude-аккаунт (Max), два режима: (a) дефолт — keychain-credentials интерактивного `claude` login; (b) выделенный годовой OAuth-токен `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN` в config.env (для launchd-надёжности). Демон вызывает `claude` по полному пути, БЕЗ `--bare`, с вычищенными `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` из env; self-check при старте — `claude auth status` (exit code 0/1) | Прецеденс аутентификации Claude Code: `ANTHROPIC_API_KEY` в env **тихо переключает биллинг на API-кредиты** в `-p` режиме; `--bare` игнорирует `CLAUDE_CODE_OAUTH_TOKEN`; launchd-процессы имеют минимальный env/PATH и могут упираться в Keychain (известные issues #69173, #37512) — поэтому env-инъекция токена как надёжный режим |
 
 ## 5. Схема данных (SQLite)
 
@@ -310,6 +311,7 @@ LLM возвращает строгий JSON (Ollama `format=json`):
 | 24GB: swap/OOM на длинной встрече | Последовательные стадии + memory-guard + QoS; диаризация после выгрузки Whisper |
 | Vikhr-8B слабее Claude на action items | Метрика качества → триггер на Claude opt-in / T-pro 2.0 (последовательно); движок помечен в заметке |
 | Дрейф флагов `claude` CLI между версиями | Валидация JSON-схемы; любой сбой → тихий откат на Ollama-результат |
+| Claude Auth из демона: launchd-хэнги (issue #69173), `CLAUDE_CODE_OAUTH_TOKEN` может снести keychain-entry интерактивных сессий (issue #37512) | Self-check `claude auth status` при старте; smoke-test точной launchd-команды в M6 Verify; после включения token-режима проверить, что интерактивный `claude` login жив; сбой auth → бустер отключается с одним уведомлением, пайплайн не страдает |
 | SQLite конкурентная запись | WAL + один writer на таблицу; UI/бот ходят через ControlSocket, не в БД |
 | Scope creep (FTS, бот, диаризация) | Всё это Phase 2 (M7); must-фичи закрываются в M1-M6 |
 
