@@ -1,18 +1,36 @@
 """
-Конфигурация MeetMind v2.
+Конфигурация MeetMind v3.
 
 Все настройки читаются из .env (см. .env.example). Любую можно переопределить
 переменной окружения. Сложные настройки выбора движка (Ollama vs Claude)
 доступны в одном месте.
+
+Секреты живут в `app_dir()/config.env` (SPEC_v3 D14), вне репозитория, с
+правами 0600. Для разработки — fallback на `./.env` в корне проекта, если
+app-level config.env ещё не создан.
 """
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# .env берётся из корня проекта
-env_path = Path(__file__).parent / ".env"
+from daemon.paths import app_dir
+
+# .env: приоритет — app_dir()/config.env (прод, секреты, chmod 600),
+# fallback — ./.env в корне проекта (разработка).
+env_path = app_dir() / "config.env"
+if not env_path.exists():
+    env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
+
+
+def write_config_env(values: dict[str, str]) -> Path:
+    """Записать пары key=value в app_dir()/config.env и выставить права 0600
+    (SPEC_v3 D14: секреты не должны быть читаемы другими пользователями)."""
+    path = app_dir() / "config.env"
+    path.write_text("\n".join(f"{k}={v}" for k, v in values.items()) + "\n")
+    path.chmod(0o600)
+    return path
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -114,17 +132,13 @@ GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json
 SESSIONS_DIR = Path(os.getenv("SESSIONS_DIR", "sessions"))
 SESSIONS_DIR.mkdir(exist_ok=True)
 
-# ─── Сервера ────────────────────────────────────────────────────────────────
-WS_PORT = int(os.getenv("WS_PORT", "8765"))
-WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
-
 # ─── Логи ───────────────────────────────────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 
 def summary() -> str:
     """Текстовая сводка по конфигу — для логирования при старте."""
-    lines = ["━" * 60, "MeetMind v2 config:"]
+    lines = ["━" * 60, "MeetMind v3 config:"]
     cloud_info = "off"
     if USE_CLAUDE_CODE:
         cloud_info = f"claude-code:{CLAUDE_CODE_MODEL} (Max)"
