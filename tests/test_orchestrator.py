@@ -119,3 +119,159 @@ def test_cancel_race(tmp_path, monkeypatch):
         "SELECT * FROM pipeline_jobs WHERE session_id=? AND stage='transcribe'", (sid,)
     ).fetchone()
     assert job["status"] == "skipped"
+
+
+# ------------------------------------------------------------------------
+# Task 2.6: уведомление о долгой обработке (SPEC_v3 §9/§10). Клок инжектируется
+# через параметр Orchestrator(clock=...) — тесты не трогают глобальный
+# time.monotonic, стадии сами двигают фейковый клок вперёд, эмулируя, сколько
+# "заняла" обработка.
+# ------------------------------------------------------------------------
+
+
+class _FakeClock:
+    def __init__(self, start: float = 0.0):
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _recorded_session_with_transcribe_job(con):
+    sid = db.create_session(con, source="manual")
+    for st in (State.RECORDING, State.RECORDED):
+        db.set_state(con, sid, st)
+    db.enqueue_job(con, sid, "transcribe")
+    return sid
+
+
+def test_long_processing_notifies_once_after_threshold(tmp_path, monkeypatch):
+    """Суммарное время TRANSCRIBING+SUMMARIZING превышает порог -> ровно одно
+    уведомление, вызванное на переходе в следующую chain-стадию (deliver)."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    monkeypatch.setenv("MEETMIND_LONG_PROCESSING_MIN", "15")
+    _no_memory_limit(monkeypatch)
+    con = db.connect()
+    sid = _recorded_session_with_transcribe_job(con)
+
+    clock = _FakeClock()
+    notified = []
+    orch = Orchestrator(
+        con,
+        stages={
+            "transcribe": lambda s: clock.advance(10 * 60),  # 10 мин
+            "summarize": lambda s: clock.advance(10 * 60),  # +10 мин = 20 > 15
+            "deliver": lambda s: None,
+        },
+        progress_notifier=lambda sid_, minutes: notified.append((sid_, minutes)),
+        clock=clock,
+    )
+    orch.run_once_until_idle()
+
+    assert db.get_session(con, sid)["state"] == State.DELIVERED
+    assert notified == [(sid, 20.0)]
+    # таймер убран из памяти после DELIVERED (не течёт бесконечно)
+    assert sid not in orch._processing_started
+
+
+def test_long_processing_not_notified_under_threshold(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    monkeypatch.setenv("MEETMIND_LONG_PROCESSING_MIN", "15")
+    _no_memory_limit(monkeypatch)
+    con = db.connect()
+    sid = _recorded_session_with_transcribe_job(con)
+
+    clock = _FakeClock()
+    notified = []
+    orch = Orchestrator(
+        con,
+        stages={
+            "transcribe": lambda s: clock.advance(60),
+            "summarize": lambda s: clock.advance(60),
+            "deliver": lambda s: clock.advance(60),
+        },
+        progress_notifier=lambda sid_, minutes: notified.append((sid_, minutes)),
+        clock=clock,
+    )
+    orch.run_once_until_idle()
+
+    assert db.get_session(con, sid)["state"] == State.DELIVERED
+    assert notified == []
+
+
+def test_long_processing_env_threshold_override_and_no_duplicate(tmp_path, monkeypatch):
+    """MEETMIND_LONG_PROCESSING_MIN=1 понижает порог; после первого срабатывания
+    дальнейшие стадии той же сессии уведомление не дублируют."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    monkeypatch.setenv("MEETMIND_LONG_PROCESSING_MIN", "1")
+    _no_memory_limit(monkeypatch)
+    con = db.connect()
+    sid = _recorded_session_with_transcribe_job(con)
+
+    clock = _FakeClock()
+    notified = []
+    orch = Orchestrator(
+        con,
+        stages={
+            "transcribe": lambda s: clock.advance(2 * 60),
+            "summarize": lambda s: clock.advance(2 * 60),
+            "deliver": lambda s: clock.advance(2 * 60),
+        },
+        progress_notifier=lambda sid_, minutes: notified.append((sid_, minutes)),
+        clock=clock,
+    )
+    orch.run_once_until_idle()
+
+    assert len(notified) == 1
+    assert notified[0][0] == sid
+
+
+def test_long_processing_without_progress_notifier_does_not_crash(tmp_path, monkeypatch):
+    """progress_notifier не передан (None) — таймер считается молча, без ошибок."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    monkeypatch.setenv("MEETMIND_LONG_PROCESSING_MIN", "1")
+    _no_memory_limit(monkeypatch)
+    con = db.connect()
+    sid = _recorded_session_with_transcribe_job(con)
+
+    clock = _FakeClock()
+    orch = Orchestrator(
+        con,
+        stages={
+            "transcribe": lambda s: clock.advance(5 * 60),
+            "summarize": lambda s: None,
+            "deliver": lambda s: None,
+        },
+        clock=clock,
+    )
+    orch.run_once_until_idle()  # не должен упасть без progress_notifier
+
+    assert db.get_session(con, sid)["state"] == State.DELIVERED
+
+
+def test_long_processing_default_clock_is_time_monotonic(tmp_path, monkeypatch):
+    """Без явного clock= используется настоящий time.monotonic — sanity check,
+    что дефолт не ломается (реальная длительность теста ничтожна, порог не
+    достигается)."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    _no_memory_limit(monkeypatch)
+    con = db.connect()
+    sid = _recorded_session_with_transcribe_job(con)
+
+    notified = []
+    orch = Orchestrator(
+        con,
+        stages={
+            "transcribe": lambda s: None,
+            "summarize": lambda s: None,
+            "deliver": lambda s: None,
+        },
+        progress_notifier=lambda sid_, minutes: notified.append((sid_, minutes)),
+    )
+    orch.run_once_until_idle()
+
+    assert db.get_session(con, sid)["state"] == State.DELIVERED
+    assert notified == []
