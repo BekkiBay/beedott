@@ -7,8 +7,9 @@ import logging
 import shutil
 import threading
 
-from daemon import db
+from daemon import db, reconcile, retention
 from daemon.control import ControlError, ControlServer
+from daemon.notifier import notify
 from daemon.orchestrator import Orchestrator
 from daemon.paths import session_dir
 from daemon.recorder import Recorder
@@ -45,7 +46,12 @@ class DaemonApp:
                 meeting_key=params.get("meeting_key"),
             )
             wav = session_dir(sid) / "audio.wav"
-            rec = Recorder(out_path=wav)
+            rec = Recorder(
+                out_path=wav,
+                on_autostop=lambda reason, _sid=sid: self._on_autostop(_sid, reason),
+                on_silence=lambda _sid=sid: notify(
+                    "MeetMind", "Долгая тишина — остановить запись? ⌘ record stop"),
+            )
             try:
                 rec.start()
             except Exception:
@@ -63,12 +69,28 @@ class DaemonApp:
             if self._recorder is None or sid != self._active_sid:
                 raise ControlError("no_active_session", "нет активной записи")
             self._recorder.stop()
-            self._recorder = None
-            self._active_sid = None
-            db.set_state(self._con, sid, State.RECORDED, ended_at=db.now())
-            db.enqueue_job(self._con, sid, "transcribe")
-            logger.info("REC stop: %s -> очередь transcribe", sid)
+            self._finalize_recording(sid)
             return {"session_id": sid}
+
+    def _finalize_recording(self, sid: str) -> None:
+        """Под self._lock. Закрывает запись и ставит транскрипцию в очередь."""
+        self._recorder = None
+        self._active_sid = None
+        db.set_state(self._con, sid, State.RECORDED, ended_at=db.now())
+        db.enqueue_job(self._con, sid, "transcribe")
+        logger.info("REC stop: %s -> очередь transcribe", sid)
+
+    def _on_autostop(self, sid: str, reason: str) -> None:
+        """Вызывается writer-потоком Recorder при duration_limit/disk_full.
+        Recorder уже остановил себя и закрыл файл — только финализируем сессию."""
+        with self._lock:
+            if sid != self._active_sid:
+                return
+            self._finalize_recording(sid)
+        human = {"duration_limit": "превышен лимит длительности",
+                 "disk_full": "мало места на диске"}.get(reason, reason)
+        notify("MeetMind", f"Запись остановлена автоматически: {human}. "
+                           "Записанное будет обработано.")
 
     def cancel_recording(self, params: dict) -> dict:
         with self._lock:
@@ -126,9 +148,26 @@ class DaemonApp:
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s %(name)s %(levelname)s %(message)s")
+        orch_con = db.connect()
+
+        # Startup reconciliation: осиротевшие RECORDING-сессии и running-джобы
+        # после краша/ребута (SPEC_v3 §10). Рекордер в этот момент точно не жив.
+        for action in reconcile.reconcile(
+                orch_con, notifier=lambda sid, msg: notify("MeetMind", msg)):
+            logger.info("reconcile: %s", action)
+        removed = retention.sweep(orch_con)
+        if removed:
+            logger.info("retention: удалено аудио %d старых сессий", len(removed))
+
         server = ControlServer(self.handlers())
         server.start()
-        orch_con = db.connect()
-        orch = Orchestrator(orch_con, make_stages())
+        orch = Orchestrator(
+            orch_con, make_stages(),
+            notifier=lambda sid, stage, err: notify(
+                "MeetMind", f"Встреча {sid} не обработана ({stage}): {err[:120]} — "
+                            f"аудио сохранено, reprocess доступен"),
+            progress_notifier=lambda sid, minutes: notify(
+                "MeetMind", f"Обработка длинной встречи продолжается ({minutes:.0f} мин)"),
+        )
         logger.info("MeetMind daemon v3 запущен (control socket + orchestrator)")
         orch.run_forever()

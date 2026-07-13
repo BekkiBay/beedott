@@ -11,6 +11,7 @@ from pathlib import Path
 
 import config
 from daemon import db
+from daemon.notifier import notify
 from daemon.ollama_client import OllamaDown, OllamaModelMissing
 from daemon.paths import session_dir
 from daemon.render import render_followup
@@ -19,6 +20,9 @@ from daemon.summarizer import summarize_ollama, validate_followup
 from daemon.transcriber import Transcriber, dedupe_lines
 
 logger = logging.getLogger(__name__)
+
+# сессии, уже получившие быстрое «Ollama не запущена» (не спамить на каждом ретрае)
+_ollama_notified: set[str] = set()
 
 
 def _duration_min(session) -> int:
@@ -61,9 +65,12 @@ def summarize(session) -> None:
     except (OllamaDown, OllamaModelMissing) as exc:
         # SPEC_v3 §10 «Ollama не запущена»: демон уже попытался поднять её сам
         # (daemon.ollama_client.ensure_running) — не вышло, автопереключения
-        # на Claude нет. Пробрасываем как есть: сообщение уже человекочитаемое
-        # (см. ollama_client), оркестратор сделает штатный failed_retry.
+        # на Claude нет. Уведомляем СРАЗУ (не после 8 ретраев), один раз на
+        # сессию; оркестратор дальше делает штатный failed_retry.
         logger.error("summarize %s: Ollama недоступна — %s", session["id"], exc)
+        if session["id"] not in _ollama_notified:
+            _ollama_notified.add(session["id"])
+            notify("MeetMind", f"{exc} — встреча в очереди, обработается после запуска")
         raise
     validate_followup({k: v for k, v in followup.items() if k != "degraded"})
     (sdir / "followup.json").write_text(
