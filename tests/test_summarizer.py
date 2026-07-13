@@ -84,6 +84,19 @@ def _ollama_payload(content_obj: dict) -> dict:
     return {"message": {"role": "assistant", "content": json.dumps(content_obj, ensure_ascii=False)}}
 
 
+@pytest.fixture(autouse=True)
+def _ollama_healthy(monkeypatch):
+    """summarize_ollama теперь дёргает ollama_client.ensure_running/ensure_model
+    в начале (Task 2.5 — health-check вынесен из summarizer в daemon/ollama_client.py).
+    В этих тестах Ollama всегда «жива» с моделью test-model, чтобы тестировался
+    только сам chat-путь, как и до вынесения HTTP-слоя. Ветки ensure_running/
+    ensure_model покрыты отдельно в tests/test_ollama_client.py."""
+    def fake_get(url, timeout=None):
+        return FakeResponse({"models": [{"name": "test-model"}]})
+
+    monkeypatch.setattr("daemon.ollama_client.requests.get", fake_get)
+
+
 def test_summarize_ollama_success(monkeypatch):
     calls = []
 
@@ -91,7 +104,7 @@ def test_summarize_ollama_success(monkeypatch):
         calls.append((url, json))
         return FakeResponse(_ollama_payload(GOOD))
 
-    monkeypatch.setattr("daemon.summarizer.requests.post", fake_post)
+    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
 
     result = summarize_ollama(
         "Спикер 1: привет\nСпикер 2: привет",
@@ -119,7 +132,7 @@ def test_summarize_ollama_invalid_json_degrades_after_retries(monkeypatch):
         calls.append(1)
         return FakeResponse({"message": {"role": "assistant", "content": "это не json вообще"}})
 
-    monkeypatch.setattr("daemon.summarizer.requests.post", fake_post)
+    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
 
     result = summarize_ollama(
         "какой-то транскрипт",
@@ -141,7 +154,7 @@ def test_summarize_ollama_network_error_degrades(monkeypatch):
     def fake_post(url, json=None, timeout=None):
         raise requests.ConnectionError("ollama не поднята")
 
-    monkeypatch.setattr("daemon.summarizer.requests.post", fake_post)
+    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
 
     result = summarize_ollama(
         "транскрипт встречи",
@@ -164,7 +177,7 @@ def test_summarize_ollama_retries_then_succeeds(monkeypatch):
     def fake_post(url, json=None, timeout=None):
         return responses.pop(0)
 
-    monkeypatch.setattr("daemon.summarizer.requests.post", fake_post)
+    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
 
     result = summarize_ollama(
         "транскрипт",
@@ -187,7 +200,7 @@ def test_summarize_ollama_map_reduce_triggers_on_long_transcript(monkeypatch):
         calls.append(json)
         return FakeResponse(_ollama_payload(GOOD))
 
-    monkeypatch.setattr("daemon.summarizer.requests.post", fake_post)
+    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
 
     result = summarize_ollama(
         long_transcript,
@@ -216,7 +229,7 @@ def test_summarize_ollama_map_reduce_degraded_partial_propagates(monkeypatch):
             return FakeResponse({"message": {"role": "assistant", "content": "плохой json"}})
         return FakeResponse(_ollama_payload(GOOD))
 
-    monkeypatch.setattr("daemon.summarizer.requests.post", fake_post)
+    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
 
     result = summarize_ollama(
         long_transcript,

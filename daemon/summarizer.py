@@ -20,6 +20,7 @@ from typing import Optional
 import requests
 
 from config import OLLAMA_MODEL, OLLAMA_URL
+from daemon import ollama_client
 
 logger = logging.getLogger(__name__)
 
@@ -190,25 +191,9 @@ def _build_reduce_messages(partials: list[dict], meta: dict) -> list[dict]:
 
 
 # ─────────────────────────────── Ollama I/O ──────────────────────────────────
-
-
-def _chat_json(
-    messages: list[dict], *, model: str, ollama_url: str, num_ctx: int = OLLAMA_NUM_CTX,
-    timeout: int = OLLAMA_TIMEOUT_S,
-) -> str:
-    """Один POST /api/chat с format=json. Возвращает сырой content (строка).
-    Кидает requests.RequestException при сетевой ошибке/не-2xx."""
-    payload = {
-        "model": model,
-        "stream": False,
-        "format": "json",
-        "messages": messages,
-        "options": {"temperature": 0.2, "num_ctx": num_ctx},
-    }
-    r = requests.post(f"{ollama_url.rstrip('/')}/api/chat", json=payload, timeout=timeout)
-    r.raise_for_status()
-    data = r.json()
-    return (data.get("message") or {}).get("content", "") or ""
+# HTTP-слой (health-check, autostart, POST /api/chat) вынесен в
+# daemon/ollama_client.py (PLAN_v3 Task 2.5) — здесь только оркестрация
+# ретраев/валидации JSON поверх ollama_client.chat_json().
 
 
 def _chat_json_with_retries(
@@ -219,7 +204,9 @@ def _chat_json_with_retries(
     last_raw = ""
     for attempt in range(retries + 1):
         try:
-            raw = _chat_json(messages, model=model, ollama_url=ollama_url)
+            raw = ollama_client.chat_json(
+                messages, model=model, url=ollama_url,
+                num_ctx=OLLAMA_NUM_CTX, timeout=OLLAMA_TIMEOUT_S)
         except requests.RequestException as e:
             logger.error(f"Ollama запрос упал (попытка {attempt + 1}/{retries + 1}): {e}")
             last_raw = ""
@@ -301,10 +288,22 @@ def summarize_ollama(
         dict со схемой SPEC_v3 §7 (context/discussed/decisions/action_items/
         open_questions) + служебный ключ `degraded: bool` (True, если хотя бы
         часть JSON не удалось распарсить и пришлось идти в fallback).
+
+    Raises:
+        ollama_client.OllamaDown: Ollama не отвечает и не поднялась автостартом
+            (SPEC_v3 §10 — без автопереключения на Claude, штатный failed_retry).
+        ollama_client.OllamaModelMissing: Ollama жива, но модель `model` не
+            скачана (`ollama pull <model>`).
     """
     model = model or OLLAMA_MODEL
     ollama_url = ollama_url or OLLAMA_URL
     transcript = transcript or ""
+
+    # Health-check относится к реальному боевому вызову: если Ollama не
+    # запущена или не поднялась автостартом, кидаем понятную ошибку прежде
+    # чем тратить ретраи на JSON-парсинг заведомо недостижимого сервиса.
+    ollama_client.ensure_running(ollama_url)
+    ollama_client.ensure_model(ollama_url, model)
 
     if len(transcript) > MAP_REDUCE_CHUNK_CHARS:
         return _summarize_map_reduce(transcript, meta, model=model, ollama_url=ollama_url)
