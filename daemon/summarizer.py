@@ -1,27 +1,25 @@
 """
-Гибридный summarizer: три backend'а работают параллельно.
+Суммаризация через Ollama, строгий JSON по схеме SPEC_v3 §7.
 
-    1) Ollama (локально, бесплатно, оффлайн) — Vikhr-Nemo / Qwen / T-pro
-    2) Claude Code CLI (через Max-подписку, без отдельного API-биллинга)  ← рекомендую
-    3) Anthropic API напрямую (если нет Max, нужен API ключ)
+Модель по умолчанию — из config.OLLAMA_MODEL (Vikhr-YandexGPT-5-Lite-8B-it,
+см. SPEC_v3 D8). LLM возвращает JSON (`format=json`), рендер в markdown —
+отдельно, в daemon/render.py. Claude-бустер (opt-in, поверх готового
+Ollama-результата) приезжает отдельно в M7 (daemon/claude_booster.py) — тут
+НЕ реализован.
 
-Каждый backend выключаемый через config. Можно включить любую комбинацию.
-Для типичного юзкейса с Max: USE_OLLAMA=true + USE_CLAUDE_CODE=true,
-USE_ANTHROPIC=false (чтобы не дублировать оплату).
+Map-reduce: транскрипты длиннее MAP_REDUCE_CHUNK_CHARS режутся на части,
+каждая часть суммируется в JSON той же схемы, финальный проход через ту же
+модель сливает частичные JSON в один. Невалидный JSON после MAX_JSON_RETRIES
+ретраев на каком-либо LLM-вызове → деградированный fallback:
+`{"context": <сырой текст>, ...остальное пустое}` + `degraded=True`.
 """
+import json
 import logging
-import os
-import shutil
-import subprocess
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional
 
 import requests
 
-from daemon.session import Session
+from config import OLLAMA_MODEL, OLLAMA_URL
 
 logger = logging.getLogger(__name__)
 
@@ -32,327 +30,291 @@ SYSTEM_PROMPT = (
     "Только факты, договорённости, дедлайны, ответственные."
 )
 
-USER_PROMPT_TEMPLATE = """Проанализируй запись встречи и создай структурированный фоллоу-ап.
+# ─── схема фоллоу-апа (SPEC_v3 §7) ───────────────────────────────────────────
+FOLLOWUP_KEYS = {"context", "discussed", "decisions", "action_items", "open_questions"}
+ACTION_ITEM_KEYS = {"task", "owner", "deadline"}
 
-Встреча: {title}
-Дата: {date_str}, {start_time}-{end_time} ({duration} минут)
-Участники: {attendees}
+# ─── map-reduce / ретраи ──────────────────────────────────────────────────────
+MAP_REDUCE_CHUNK_CHARS = 48_000  # ~12k токенов, см. PLAN_v3 Task 1.5
+MAX_JSON_RETRIES = 2  # итого до 3 попыток на один LLM-вызов
+OLLAMA_NUM_CTX = 16384
+OLLAMA_TIMEOUT_S = 600
 
-Полная запись встречи:
+
+# ─────────────────────────────── валидация ───────────────────────────────────
+
+
+def validate_followup(obj: dict) -> dict:
+    """Ручная проверка схемы SPEC_v3 §7 (без jsonschema-зависимости).
+
+    Проверяет и типы, и точный набор ключей (без лишних/пропущенных). Кидает
+    ValueError с описанием проблемы при любом несоответствии. Возвращает
+    исходный объект без изменений при успехе.
+    """
+    if not isinstance(obj, dict):
+        raise ValueError(f"followup должен быть dict, получено {type(obj).__name__}")
+
+    keys = set(obj.keys())
+    if keys != FOLLOWUP_KEYS:
+        missing = FOLLOWUP_KEYS - keys
+        extra = keys - FOLLOWUP_KEYS
+        raise ValueError(
+            f"followup: неверный набор ключей (missing={sorted(missing)}, "
+            f"extra={sorted(extra)})"
+        )
+
+    if not isinstance(obj["context"], str):
+        raise ValueError("context должен быть str")
+
+    for field in ("discussed", "decisions", "open_questions"):
+        val = obj[field]
+        if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+            raise ValueError(f"{field} должен быть list[str]")
+
+    action_items = obj["action_items"]
+    if not isinstance(action_items, list):
+        raise ValueError("action_items должен быть list")
+    for i, item in enumerate(action_items):
+        if not isinstance(item, dict):
+            raise ValueError(f"action_items[{i}] должен быть dict")
+        item_keys = set(item.keys())
+        if item_keys != ACTION_ITEM_KEYS:
+            raise ValueError(
+                f"action_items[{i}]: неверный набор ключей {sorted(item_keys)}"
+            )
+        if not isinstance(item.get("task"), str):
+            raise ValueError(f"action_items[{i}].task должен быть str")
+        if not isinstance(item.get("owner"), str):
+            raise ValueError(f"action_items[{i}].owner должен быть str")
+        deadline = item.get("deadline")
+        if deadline is not None and not isinstance(deadline, str):
+            raise ValueError(f"action_items[{i}].deadline должен быть str|None")
+
+    return obj
+
+
+def _degraded_followup(raw_text: str) -> dict:
+    """Fallback после исчерпанных ретраев: сырой текст в context, остальное
+    пусто, degraded=True (SPEC не требует его в схеме — это внутренний флаг
+    для render.py/оркестратора)."""
+    return {
+        "context": (raw_text or "").strip(),
+        "discussed": [],
+        "decisions": [],
+        "action_items": [],
+        "open_questions": [],
+        "degraded": True,
+    }
+
+
+# ─────────────────────────────── промпты ─────────────────────────────────────
+
+
+def _build_user_prompt(transcript: str, meta: dict, *, is_chunk: bool = False) -> str:
+    title = meta.get("title") or "Без названия"
+    duration = meta.get("duration_min")
+    duration_str = f"{duration} минут" if duration is not None else "неизвестна"
+
+    chunk_note = ""
+    if is_chunk:
+        chunk_info = meta.get("_chunk_info", "часть длинной записи")
+        chunk_note = (
+            f"\nЭто {chunk_info} длинной встречи. Суммируй только то, что "
+            "реально есть в этом фрагменте — не додумывай, что было до или "
+            "после него.\n"
+        )
+
+    return f"""Проанализируй транскрипт встречи «{title}» (длительность {duration_str}).
+{chunk_note}
+Транскрипт:
 ---
 {transcript}
 ---
 
-Создай фоллоу-ап СТРОГО в этом формате (без отступления):
+Верни ОТВЕТ СТРОГО в виде одного JSON-объекта (никакого текста вне JSON) со
+следующими ключами:
+- "context": строка — 2-3 предложения о чём встреча, к чему пришли
+- "discussed": список строк — пункты обсуждения ("кто что сказал/предложил")
+- "decisions": список строк — конкретные принятые решения
+- "action_items": список объектов вида
+  {{"task": "что сделать", "owner": "кто отвечает", "deadline": "2026-07-20" | "asap" | null}}
+- "open_questions": список строк — что осталось нерешённым
 
-**{title}** · {date_str}, {start_time}-{end_time} ({duration} мин)
-👥 {attendees}
-
-**Контекст**
-[2-3 предложения: о чём встреча, какая проблема обсуждалась, к чему пришли]
-
-**Что обсуждалось**
-• [пункт 1 — кто что сказал/предложил]
-• [пункт 2]
-• [пункт 3]
-
-**Договорённости**
-• [конкретное решение 1]
-• [конкретное решение 2]
-
-**Action items**
-📅 [дата дедлайна или "asap"] — [что сделать] — [кто отвечает]
-📅 [...] — [...] — [...]
-
-**Открытые вопросы**
-• [что осталось нерешённым]
-
-Если каких-то пунктов в записи нет — пиши "нет" в соответствующей секции, не выдумывай.
-Отвечай ТОЛЬКО фоллоу-апом, без преамбулы вроде "Вот ваш фоллоу-ап:" и без postscript.
+Правила:
+- Не выдумывай факты, которых нет в транскрипте. Если по разделу сказать
+  нечего — верни пустой список [] (или пустую строку "" для context), а не
+  придуманный текст.
+- Если имена спикеров в транскрипте неразличимы — называй их "Спикер 1",
+  "Спикер 2" и т.д., не выдумывай имена.
+- Набор ключей и типы должны СТРОГО совпадать со схемой выше, без
+  дополнительных ключей.
+- Ответ — ТОЛЬКО валидный JSON: без markdown-обёртки ```json, без преамбулы
+  вроде "Вот фоллоу-ап:", без комментариев после JSON.
 """
 
 
-@dataclass
-class FollowupResult:
-    """Результат суммаризации — содержит варианты фоллоу-апа от разных движков.
-
-    Поле .local — от Ollama. Поле .cloud — от Claude (CLI или API, что включено).
-    """
-
-    local: Optional[str] = None
-    cloud: Optional[str] = None
-    local_engine: str = ""
-    cloud_engine: str = ""
-    local_duration_s: float = 0.0
-    cloud_duration_s: float = 0.0
-    errors: list[str] = field(default_factory=list)
-
-    @property
-    def has_any(self) -> bool:
-        return bool(self.local or self.cloud)
-
-    @property
-    def primary(self) -> Optional[str]:
-        return self.cloud or self.local
+def _build_messages(transcript: str, meta: dict, *, is_chunk: bool = False) -> list[dict]:
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": _build_user_prompt(transcript, meta, is_chunk=is_chunk)},
+    ]
 
 
-class Summarizer:
-    """Гибридный суммаризатор: Ollama + Claude Code CLI + Claude API.
+def _build_reduce_messages(partials: list[dict], meta: dict) -> list[dict]:
+    title = meta.get("title") or "Без названия"
+    parts_json = "\n\n".join(
+        f"Часть {i + 1}:\n{json.dumps(p, ensure_ascii=False, indent=2)}"
+        for i, p in enumerate(partials)
+    )
+    user_prompt = f"""Ниже — JSON-саммари нескольких последовательных фрагментов одной
+встречи «{title}», в хронологическом порядке. Слей их в ОДИН итоговый JSON-объект
+той же схемы: убери дубликаты между частями, сохрани хронологию, объедини
+близкие action items с одинаковыми task/owner.
 
-    Любой из трёх backend'ов можно выключить. Включённые работают параллельно.
-    """
+{parts_json}
 
-    def __init__(
-        self,
-        # Anthropic API (классический путь, нужен sk-ant-... ключ)
-        anthropic_api_key: str = "",
-        anthropic_model: str = "claude-sonnet-4-5",
-        use_anthropic: bool = True,
-        # Claude Code CLI (использует Max-подписку через CLI авторизацию)
-        use_claude_code: bool = False,
-        claude_code_model: str = "opus",  # opus / sonnet / haiku — алиасы Claude Code
-        claude_code_binary: str = "claude",
-        # Ollama (локально)
-        ollama_url: str = "http://localhost:11434",
-        ollama_model: str = "vikhr-nemo:12b-instruct-q4",
-        use_ollama: bool = True,
-    ):
-        self.anthropic_model = anthropic_model
-        self.use_anthropic = use_anthropic and bool(anthropic_api_key)
+Верни СТРОГО один JSON-объект (никакого текста вне JSON) с ключами:
+- "context": строка — 2-3 предложения о встрече целиком
+- "discussed": список строк
+- "decisions": список строк
+- "action_items": список объектов {{"task", "owner", "deadline"}}
+- "open_questions": список строк
 
-        self.claude_code_model = claude_code_model
-        self.claude_code_binary = claude_code_binary
-        self.use_claude_code = use_claude_code
+Не выдумывай факты, которых нет в частях выше. Никаких дополнительных ключей,
+никакой markdown-обёртки, никакой преамбулы.
+"""
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
 
-        self.ollama_url = ollama_url.rstrip("/")
-        self.ollama_model = ollama_model
-        self.use_ollama = use_ollama
 
-        # ── Anthropic API ──
-        self._anthropic_client = None
-        if self.use_anthropic:
-            try:
-                from anthropic import Anthropic
+# ─────────────────────────────── Ollama I/O ──────────────────────────────────
 
-                self._anthropic_client = Anthropic(api_key=anthropic_api_key)
-                logger.info(f"Anthropic API готов: {anthropic_model}")
-            except Exception as e:
-                logger.error(f"Anthropic API не поднялся: {e}")
-                self.use_anthropic = False
 
-        # ── Claude Code CLI ──
-        if self.use_claude_code:
-            if shutil.which(claude_code_binary):
-                logger.info(
-                    f"Claude Code CLI готов: «{claude_code_binary} --model {claude_code_model}»"
-                )
-            else:
-                logger.warning(
-                    f"Claude Code CLI «{claude_code_binary}» не найден в PATH. "
-                    f"Установи: https://docs.claude.com/claude-code/setup"
-                )
-                self.use_claude_code = False
+def _chat_json(
+    messages: list[dict], *, model: str, ollama_url: str, num_ctx: int = OLLAMA_NUM_CTX,
+    timeout: int = OLLAMA_TIMEOUT_S,
+) -> str:
+    """Один POST /api/chat с format=json. Возвращает сырой content (строка).
+    Кидает requests.RequestException при сетевой ошибке/не-2xx."""
+    payload = {
+        "model": model,
+        "stream": False,
+        "format": "json",
+        "messages": messages,
+        "options": {"temperature": 0.2, "num_ctx": num_ctx},
+    }
+    r = requests.post(f"{ollama_url.rstrip('/')}/api/chat", json=payload, timeout=timeout)
+    r.raise_for_status()
+    data = r.json()
+    return (data.get("message") or {}).get("content", "") or ""
 
-        # ── Ollama ──
-        if self.use_ollama:
-            if self._ping_ollama():
-                logger.info(f"Ollama готова: {ollama_url}, модель {ollama_model}")
-            else:
-                logger.warning(f"Ollama не отвечает по {ollama_url} — выключаю")
-                self.use_ollama = False
 
-        if not (self.use_ollama or self.use_anthropic or self.use_claude_code):
-            logger.error("Все три движка выключены — суммаризация не работает")
-
-    # ───────────────────────────── публичный API ──────────────────────────────
-
-    def summarize(
-        self, enriched_transcript: list[dict], session: Session
-    ) -> FollowupResult:
-        """Запустить включённые backend'ы параллельно и вернуть результат."""
-        prompt = self._build_user_prompt(enriched_transcript, session)
-
-        # Какой движок занимает «cloud» слот? Если включены оба — Claude Code приоритетнее
-        # (он бесплатный через Max), Anthropic API как запасной.
-        cloud_label = ""
-        if self.use_claude_code:
-            cloud_label = f"claude-code:{self.claude_code_model}"
-        elif self.use_anthropic:
-            cloud_label = f"anthropic:{self.anthropic_model}"
-
-        result = FollowupResult(
-            local_engine=f"ollama:{self.ollama_model}" if self.use_ollama else "",
-            cloud_engine=cloud_label,
-        )
-
-        tasks: list[tuple[str, callable, str]] = []
-        if self.use_ollama:
-            tasks.append(("local", self._summarize_ollama, prompt))
-        if self.use_claude_code:
-            tasks.append(("cloud", self._summarize_claude_code, prompt))
-        elif self.use_anthropic:
-            # Anthropic API только если Claude Code не включён — чтобы избежать
-            # двойной оплаты тому же провайдеру за один и тот же вопрос
-            tasks.append(("cloud", self._summarize_anthropic, prompt))
-
-        if not tasks:
-            result.errors.append("ни одного движка не включено")
-            return result
-
-        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-            futures = {pool.submit(fn, prm): name for name, fn, prm in tasks}
-            for fut in as_completed(futures):
-                name = futures[fut]
-                t0 = time.time()
-                try:
-                    text = fut.result()
-                    elapsed = time.time() - t0
-                    if name == "local":
-                        result.local = text
-                        result.local_duration_s = elapsed
-                    else:
-                        result.cloud = text
-                        result.cloud_duration_s = elapsed
-                except Exception as e:
-                    err = f"{name}: {e}"
-                    logger.error(f"Суммаризация {name} упала: {e}", exc_info=True)
-                    result.errors.append(err)
-
-        return result
-
-    # ───────────────────────────── внутренности ───────────────────────────────
-
-    def _ping_ollama(self) -> bool:
+def _chat_json_with_retries(
+    messages: list[dict], *, model: str, ollama_url: str, retries: int = MAX_JSON_RETRIES
+) -> tuple[Optional[dict], str]:
+    """Вызвать Ollama и распарсить+провалидировать JSON-ответ, с ретраями при
+    невалидном JSON. Возвращает (followup_dict_или_None, последний_сырой_текст)."""
+    last_raw = ""
+    for attempt in range(retries + 1):
         try:
-            r = requests.get(f"{self.ollama_url}/api/tags", timeout=2)
-            return r.status_code == 200
-        except Exception:
-            return False
+            raw = _chat_json(messages, model=model, ollama_url=ollama_url)
+        except requests.RequestException as e:
+            logger.error(f"Ollama запрос упал (попытка {attempt + 1}/{retries + 1}): {e}")
+            last_raw = ""
+            continue
 
-    def _build_user_prompt(
-        self, enriched_transcript: list[dict], session: Session
-    ) -> str:
-        transcript = self._format_transcript(enriched_transcript)
-        max_chars = 200_000
-        if len(transcript) > max_chars:
+        last_raw = raw
+        try:
+            obj = json.loads(raw)
+            validated = validate_followup(obj)
+            return validated, raw
+        except (json.JSONDecodeError, ValueError) as e:
             logger.warning(
-                f"Транскрипт {len(transcript)} символов, обрезаю до {max_chars}"
+                f"Ollama JSON невалиден (попытка {attempt + 1}/{retries + 1}): {e}"
             )
-            transcript = transcript[:max_chars] + "\n\n[...обрезано...]"
+            continue
 
-        start = session.start_time
-        end = session.end_time or datetime.now()
-        return USER_PROMPT_TEMPLATE.format(
-            title=session.title or "Без названия",
-            date_str=start.strftime("%d.%m.%Y"),
-            start_time=start.strftime("%H:%M"),
-            end_time=end.strftime("%H:%M"),
-            duration=session.get_duration_minutes(),
-            attendees=", ".join(session.attendees) if session.attendees else "—",
-            transcript=transcript,
-        )
+    return None, last_raw
 
-    @staticmethod
-    def _format_transcript(enriched_transcript: list[dict]) -> str:
-        lines = []
-        for item in enriched_transcript:
-            speaker = item.get("speaker", "")
-            text = (item.get("text") or "").strip()
-            if not text:
-                continue
-            source = item.get("source", "audio")
-            if source == "chat":
-                lines.append(f"[чат] {speaker}: {text}" if speaker else f"[чат] {text}")
-            else:
-                lines.append(f"{speaker}: {text}" if speaker else text)
-        return "\n".join(lines)
 
-    # ─── Anthropic API backend ────────────────────────────────────────────────
+def _chunk_text(text: str, chunk_chars: int) -> list[str]:
+    if len(text) <= chunk_chars:
+        return [text]
+    return [text[i : i + chunk_chars] for i in range(0, len(text), chunk_chars)]
 
-    def _summarize_anthropic(self, user_prompt: str) -> str:
-        logger.info(f"Anthropic API: → {self.anthropic_model}")
-        message = self._anthropic_client.messages.create(
-            model=self.anthropic_model,
-            max_tokens=4000,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        text = message.content[0].text.strip()
-        logger.info(f"Anthropic API: ← {len(text)} символов")
-        return text
 
-    # ─── Claude Code CLI backend (через Max-подписку) ─────────────────────────
+def _summarize_map_reduce(transcript: str, meta: dict, *, model: str, ollama_url: str) -> dict:
+    chunks = _chunk_text(transcript, MAP_REDUCE_CHUNK_CHARS)
+    logger.info(
+        f"Транскрипт {len(transcript)} символов > {MAP_REDUCE_CHUNK_CHARS} → "
+        f"map-reduce, {len(chunks)} чанков"
+    )
 
-    def _summarize_claude_code(self, user_prompt: str) -> str:
-        """Запустить `claude` CLI в headless-режиме.
+    partials: list[dict] = []
+    for i, chunk in enumerate(chunks):
+        chunk_meta = dict(meta)
+        chunk_meta["_chunk_info"] = f"часть {i + 1}/{len(chunks)}"
+        messages = _build_messages(chunk, chunk_meta, is_chunk=True)
+        result, raw = _chat_json_with_retries(messages, model=model, ollama_url=ollama_url)
+        if result is not None:
+            partials.append(result)
+        else:
+            logger.error(f"Map-шаг {i + 1}/{len(chunks)}: JSON не распарсился, деградирую часть")
+            partials.append(_degraded_followup(raw or chunk))
 
-        Использует существующую CLI-авторизацию (через Max-подписку юзера).
-        Промпт идёт через stdin, чтобы обойти лимит длины командной строки.
-        """
-        logger.info(f"Claude Code CLI: → model={self.claude_code_model}")
-        cmd = [
-            self.claude_code_binary,
-            "--print",                          # headless mode, печатает ответ и выходит
-            "--model", self.claude_code_model,  # opus / sonnet / haiku
-            "--append-system-prompt", SYSTEM_PROMPT,
-            "--output-format", "text",          # просто текст в stdout, без JSON-обёртки
-        ]
+    reduce_messages = _build_reduce_messages(partials, meta)
+    result, raw = _chat_json_with_retries(reduce_messages, model=model, ollama_url=ollama_url)
+    if result is not None:
+        followup = dict(result)
+        # если хоть один map-шаг деградировал — итог помечаем как частично
+        # деградированный, даже если reduce-проход прошёл успешно
+        followup["degraded"] = any(p.get("degraded") for p in partials)
+        return followup
 
-        # Окружение: убедимся что CLI не пытается лезть в TTY
-        env = os.environ.copy()
-        env.setdefault("CI", "1")
+    logger.error("Reduce-шаг: JSON не распарсился после ретраев, собираю fallback из частей")
+    combined_context = "\n\n".join(p.get("context", "") for p in partials if p.get("context"))
+    return _degraded_followup(combined_context or transcript[:MAP_REDUCE_CHUNK_CHARS])
 
-        try:
-            proc = subprocess.run(
-                cmd,
-                input=user_prompt,
-                capture_output=True,
-                text=True,
-                timeout=600,  # Opus может думать минуту-две на длинных транскриптах
-                env=env,
-            )
-        except FileNotFoundError as e:
-            raise RuntimeError(f"claude binary не найден: {e}") from e
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError(f"Claude Code CLI таймаут (>{e.timeout}с)") from e
 
-        if proc.returncode != 0:
-            stderr = (proc.stderr or "").strip()[:500]
-            raise RuntimeError(
-                f"Claude Code CLI вернул код {proc.returncode}: {stderr}"
-            )
+# ─────────────────────────────── публичный API ───────────────────────────────
 
-        text = (proc.stdout or "").strip()
-        if not text:
-            raise RuntimeError(
-                f"Claude Code CLI вернул пустой ответ. stderr: {proc.stderr[:200]}"
-            )
-        logger.info(f"Claude Code CLI: ← {len(text)} символов")
-        return text
 
-    # ─── Ollama backend ───────────────────────────────────────────────────────
+def summarize_ollama(
+    transcript: str,
+    meta: dict,
+    *,
+    model: Optional[str] = None,
+    ollama_url: Optional[str] = None,
+) -> dict:
+    """Суммаризировать транскрипт встречи через Ollama в строгий JSON (SPEC_v3 §7).
 
-    def _summarize_ollama(self, user_prompt: str) -> str:
-        logger.info(f"Ollama: → {self.ollama_model}")
-        payload = {
-            "model": self.ollama_model,
-            "stream": False,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            "options": {
-                "temperature": 0.3,
-                "num_ctx": 32768,
-            },
-        }
-        r = requests.post(
-            f"{self.ollama_url}/api/chat", json=payload, timeout=600
-        )
-        r.raise_for_status()
-        data = r.json()
-        text = data.get("message", {}).get("content", "").strip()
-        if not text:
-            raise RuntimeError(f"Ollama вернула пустой ответ: {data}")
-        logger.info(f"Ollama: ← {len(text)} символов")
-        return text
+    Args:
+        transcript: полный текст транскрипта (реплики, разделённые строками).
+        meta: контекст встречи для промпта — как минимум `title` (str) и
+            `duration_min` (число); лишние ключи игнорируются.
+        model: имя модели Ollama; по умолчанию config.OLLAMA_MODEL.
+        ollama_url: базовый URL Ollama; по умолчанию config.OLLAMA_URL.
+
+    Returns:
+        dict со схемой SPEC_v3 §7 (context/discussed/decisions/action_items/
+        open_questions) + служебный ключ `degraded: bool` (True, если хотя бы
+        часть JSON не удалось распарсить и пришлось идти в fallback).
+    """
+    model = model or OLLAMA_MODEL
+    ollama_url = ollama_url or OLLAMA_URL
+    transcript = transcript or ""
+
+    if len(transcript) > MAP_REDUCE_CHUNK_CHARS:
+        return _summarize_map_reduce(transcript, meta, model=model, ollama_url=ollama_url)
+
+    messages = _build_messages(transcript, meta)
+    result, raw = _chat_json_with_retries(messages, model=model, ollama_url=ollama_url)
+    if result is not None:
+        followup = dict(result)
+        followup["degraded"] = False
+        return followup
+
+    logger.error("Ollama: JSON не распарсился после ретраев, деградированный fallback")
+    return _degraded_followup(raw or transcript)
