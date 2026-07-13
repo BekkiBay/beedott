@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets / config (never commit)
+.env
+credentials.json
+token.json
+
+# Logs
+*.log
+
+# Data
+sessions/
+!sessions/.gitkeep
+test_output/
+*.wav
+!tests/fixtures/*.wav
+*.m4a
+
+# Swift app build artifacts
+app/build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride

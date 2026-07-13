@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}Сессии - MeetMind{% endblock %}
+
+{% block content %}
+<div class="sessions-container">
+    <!-- Заголовок и кнопка добавления -->
+    <div class="sessions-header">
+        <div class="sessions-title-block">
+            <h1 class="sessions-title">История встреч</h1>
+            <p class="sessions-subtitle">Все записанные встречи и их фоллоу-апы</p>
+        </div>
+
+        <button class="btn btn-primary" id="addMeetingBtn">
+            <span class="btn-emoji">➕</span>
+            Добавить встречу
+        </button>
+    </div>
+
+    <!-- Поиск -->
+    <div class="search-container">
+        <input
+            type="text"
+            id="searchInput"
+            class="search-input"
+            placeholder="🔍 Поиск по названию встречи..."
+        >
+    </div>
+
+    <!-- Список сессий (grid) -->
+    <div class="sessions-grid" id="sessionsGrid">
+        <!-- Загружается через JS -->
+        <div class="loading-message">Загружаем сессии...</div>
+    </div>
+
+    <!-- Если нет сессий -->
+    <div class="empty-state" id="emptyState" style="display: none;">
+        <div class="empty-icon">📭</div>
+        <h2 class="empty-title">Встреч не найдено</h2>
+        <p class="empty-text">Добавьте первую встречу, чтобы начать</p>
+        <button class="btn btn-primary" id="emptyAddBtn">
+            <span class="btn-emoji">➕</span>
+            Добавить встречу
+        </button>
+    </div>
+</div>
+
+<!-- Уведомление -->
+<div class="notification" id="notification"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Инициализация страницы
+document.addEventListener('DOMContentLoaded', () => {
+    loadSessions();
+    setupSearch();
+    setupAddMeetingButtons();
+});
+
+// Загрузка списка сессий
+async function loadSessions() {
+    try {
+        const response = await fetch('/api/sessions');
+        const sessions = await response.json();
+
+        const grid = document.getElementById('sessionsGrid');
+        const empty = document.getElementById('emptyState');
+
+        if (sessions.length === 0) {
+            grid.style.display = 'none';
+            empty.style.display = 'flex';
+            return;
+        }
+
+        grid.style.display = 'grid';
+        empty.style.display = 'none';
+
+        grid.innerHTML = sessions.map(session => createSessionCard(session)).join('');
+    } catch (error) {
+        console.error('Ошибка загрузки сессий:', error);
+        const grid = document.getElementById('sessionsGrid');
+        grid.innerHTML = '<div class="error-message">❌ Ошибка загрузки сессий</div>';
+    }
+}
+
+// Создание карточки сессии
+function createSessionCard(session) {
+    const date = new Date(session.date);
+    const dateStr = date.toLocaleDateString('ru-RU', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+    });
+    const timeStr = date.toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+
+    const participants = session.participants || [];
+    const participantAvatars = participants
+        .slice(0, 3)
+        .map(p => createAvatar(p))
+        .join('');
+
+    const moreParticipants = participants.length > 3
+        ? `<span class="participants-more">+${participants.length - 3}</span>`
+        : '';
+
+    const durationStr = session.duration
+        ? `${Math.round(session.duration / 60)} мин`
+        : '—';
+
+    const statusEmoji = session.status === 'recording' ? '⏹️' : '✅';
+    const hasFollowup = session.has_followup ? '📝' : '';
+
+    return `
+        <a href="/session/${session.id}" class="session-card">
+            <div class="session-card-header">
+                <div class="session-date">
+                    <div class="session-day">${date.getDate()}</div>
+                    <div class="session-month">${date.toLocaleDateString('ru-RU', { month: 'short' })}</div>
+                </div>
+
+                <div class="session-main">
+                    <h3 class="session-title">${escapeHtml(session.title)}</h3>
+                    <div class="session-time">${timeStr}</div>
+                </div>
+            </div>
+
+            <div class="session-card-body">
+                <div class="session-participants">
+                    ${participantAvatars}
+                    ${moreParticipants}
+                </div>
+            </div>
+
+            <div class="session-card-footer">
+                <span class="session-badge" title="Статус">
+                    ${statusEmoji}
+                    <span class="session-duration">${durationStr}</span>
+                </span>
+
+                ${hasFollowup ? '<span class="session-badge followup-badge" title="Есть фоллоу-ап">📝 Фоллоу-ап</span>' : ''}
+            </div>
+        </a>
+    `;
+}
+
+// Создание аватара участника
+function createAvatar(participant) {
+    const initials = participant
+        .split(' ')
+        .map(word => word[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2);
+
+    const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
+    const colorIndex = participant.charCodeAt(0) % colors.length;
+    const bgColor = colors[colorIndex];
+
+    return `
+        <div class="participant-avatar" style="background-color: ${bgColor};" title="${escapeHtml(participant)}">
+            ${initials}
+        </div>
+    `;
+}
+
+// Поиск по названию
+function setupSearch() {
+    const searchInput = document.getElementById('searchInput');
+    searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase();
+        const cards = document.querySelectorAll('.session-card');
+
+        cards.forEach(card => {
+            const title = card.querySelector('.session-title').textContent.toLowerCase();
+            card.style.display = title.includes(query) ? '' : 'none';
+        });
+
+        // Показываем/скрываем пустое состояние
+        const visibleCards = Array.from(cards).some(c => c.style.display !== 'none');
+        const empty = document.getElementById('emptyState');
+        if (!visibleCards && query) {
+            empty.style.display = 'flex';
+        } else if (!visibleCards && !query) {
+            // Перезагружаем, если поле очищено
+            loadSessions();
+        }
+    });
+}
+
+// Кнопка добавления встречи
+function setupAddMeetingButtons() {
+    const addBtn = document.getElementById('addMeetingBtn');
+    const emptyAddBtn = document.getElementById('emptyAddBtn');
+
+    addBtn.addEventListener('click', openAddMeetingModal);
+    emptyAddBtn.addEventListener('click', openAddMeetingModal);
+}
+
+// Вспомогательная функция для экранирования HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}
