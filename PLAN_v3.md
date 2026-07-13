@@ -222,13 +222,19 @@ uv add pyobjc-framework-CoreAudio --group dev
 
 ### Task 0.6: Гейт-решение по захвату
 
-- [ ] Заполнить таблицу в `spikes/SPIKE_RESULTS.md`: путь A ok? путь B ok? →
+- [x] Заполнить таблицу в `spikes/SPIKE_RESULTS.md`: путь A ok? путь B ok? →
   - A ok → план по умолчанию (M3-M4 Swift), B = постоянный fallback.
   - A fail/нет Developer ID → **Continuum-режим**: M3-M4 заменяются задачами M3'/M4'
     (rumps-menubar остаётся, захват только путь B). Отметить выбор здесь в PLAN_v3.md.
 
-**M0 Verify:** git-репо чистый (`git status`), `uv run pytest` зелёный, оба спайка
-имеют письменный вердикт, секретов в репо нет (`git grep -l client_secret` пусто).
+> **ГЕЙТ ПРОЙДЕН 2026-07-13: путь A (Process Tap) — GO**, проверен реальной записью
+> headless с ad-hoc подписью (Developer ID не потребовался). Путь B — GO по API через
+> хелпер `spikes/aggdev.swift` (PyObjC отброшен); BlackHole — ручная установка (sudo).
+> Идём по основному плану M1→M6, Continuum-режим не активируется.
+> Детали: `spikes/SPIKE_RESULTS.md`.
+
+**M0 Verify:** ✅ git-репо чистый, `uv run pytest` зелёный, оба спайка
+имеют письменный вердикт, секретов в репо нет.
 
 ---
 
