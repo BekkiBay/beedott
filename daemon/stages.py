@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import config
-from daemon import db
+from daemon import claude_booster, db
 from daemon.notifier import notify
 from daemon.ollama_client import OllamaDown, OllamaModelMissing
 from daemon.paths import session_dir
@@ -73,10 +73,23 @@ def summarize(session) -> None:
             notify("MeetMind", f"{exc} — встреча в очереди, обработается после запуска")
         raise
     validate_followup({k: v for k, v in followup.items() if k != "degraded"})
+
+    # Claude-бустер (PLAN_v3 Task 7.4, opt-in): best-effort улучшение поверх
+    # готовой Ollama-версии. Любой сбой внутри boost() → None, стадия не падает.
+    engine = config.OLLAMA_MODEL
+    if config.USE_CLAUDE_CODE:
+        boosted = claude_booster.boost(transcript, followup, {
+            "title": _title(session),
+            "duration_min": _duration_min(session),
+        })
+        if boosted is not None:
+            followup = boosted
+            engine = f"claude-code:{config.CLAUDE_CODE_MODEL}"
+
     (sdir / "followup.json").write_text(
         json.dumps(followup, ensure_ascii=False, indent=1), encoding="utf-8")
     md = render_followup(
-        followup, engine=config.OLLAMA_MODEL, title=_title(session),
+        followup, engine=engine, title=_title(session),
         duration_min=_duration_min(session))
     (sdir / "followup.md").write_text(md, encoding="utf-8")
     logger.info("summarize %s: %d решений, %d action items%s",

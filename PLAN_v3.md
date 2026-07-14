@@ -1224,7 +1224,7 @@ Commit — `test(m2): crash-only checklist passed`
 
 ### Task 7.4: Claude-бустер (opt-in)
 
-- [ ] `daemon/claude_auth.py` — авторизация по Claude Auth (SPEC D15):
+- [x] `daemon/claude_auth.py` — авторизация по Claude Auth (SPEC D15):
 
 ```python
 # daemon/claude_auth.py (ядро)
@@ -1263,7 +1263,7 @@ def auth_ok(oauth_token: str | None) -> bool:
 
   Тесты (мок subprocess): env очищен от ANTHROPIC_*-ключей; токен инъектится;
   auth_ok маппит exit code.
-- [ ] `daemon/claude_booster.py`: вызов `[claude_bin(), "--print", "--model", "sonnet",
+- [x] `daemon/claude_booster.py`: вызов `[claude_bin(), "--print", "--model", "sonnet",
   "--append-system-prompt", SYSTEM_PROMPT, "--output-format", "text"]`
   с `env=claude_env(token)` (паттерн из `test_one_meeting.sh:184-189`; БЕЗ `--bare`).
   Вход — транскрипт + Ollama-JSON, выход — JSON той же схемы; `validate_followup`
