@@ -3,10 +3,13 @@
 Потоки: main = orchestrator.run_forever (своё sqlite-подключение);
 control-server = asyncio-thread (своё подключение). Recorder — общий, под Lock.
 """
+import json
 import logging
 import shutil
 import threading
+from datetime import datetime
 
+import config
 from daemon import db, reconcile, retention
 from daemon.control import ControlError, ControlServer
 from daemon.notifier import notify
@@ -142,12 +145,160 @@ class DaemonApp:
         last_err = self._con.execute(
             "SELECT session_id, stage, last_error FROM pipeline_jobs"
             " WHERE last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 1").fetchone()
+        rec_title = rec_started = None
+        if self._active_sid is not None:
+            rec = db.get_session(self._con, self._active_sid)
+            if rec is not None:
+                rec_title, rec_started = rec["title"], rec["started_at"]
         return {
             "recording": self._active_sid,
+            "recording_title": rec_title,
+            "recording_started_at": rec_started,
             "sessions": {r["state"]: r["n"] for r in rows},
             "queue": [dict(r) for r in jobs],
             "last_error": dict(last_err) if last_err else None,
         }
+
+    # -------------------------------------- библиотека встреч (экраны 05-06)
+
+    def _followup_meta(self, sid: str) -> dict | None:
+        path = session_dir(sid) / "followup.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def _duration_min(row) -> float | None:
+        if not row["ended_at"]:
+            return None
+        try:
+            start = datetime.fromisoformat(row["started_at"])
+            end = datetime.fromisoformat(row["ended_at"])
+        except ValueError:
+            return None
+        return round((end - start).total_seconds() / 60, 1)
+
+    def _last_error(self, sid: str) -> str | None:
+        r = self._con.execute(
+            "SELECT stage, last_error FROM pipeline_jobs WHERE session_id=?"
+            " AND last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+            (sid,)).fetchone()
+        return f"{r['stage']}: {r['last_error']}" if r else None
+
+    def sessions_list(self, params: dict) -> dict:
+        """Список встреч для Библиотеки: новые сверху, CANCELLED скрыты.
+        status: delivered | processing | error (детали ошибки — из pipeline_jobs)."""
+        limit = int(params.get("limit") or 200)
+        rows = self._con.execute(
+            "SELECT * FROM sessions WHERE state != ?"
+            " ORDER BY started_at DESC, rowid DESC LIMIT ?",
+            (State.CANCELLED, limit)).fetchall()
+        out = []
+        for row in rows:
+            if row["state"] == State.DELIVERED:
+                status, error = "delivered", None
+            elif row["state"] == State.FAILED:
+                status, error = "error", self._last_error(row["id"])
+            else:
+                status, error = "processing", None
+            followup = self._followup_meta(row["id"])
+            sinks = [
+                {"sink": d["sink"], "status": d["status"]}
+                for d in self._con.execute(
+                    "SELECT sink, status FROM deliveries WHERE session_id=?"
+                    " ORDER BY sink", (row["id"],))]
+            out.append({
+                "id": row["id"], "title": row["title"],
+                "started_at": row["started_at"],
+                "duration_min": self._duration_min(row),
+                "state": row["state"], "status": status, "error": error,
+                "engine": followup.get("engine") if followup else None,
+                "action_items": (len(followup.get("action_items") or [])
+                                 if followup else None),
+                "sinks": sinks,
+            })
+        return {"sessions": out}
+
+    def session_detail(self, params: dict) -> dict:
+        """Карточка встречи (экран 06): followup + транскрипт с таймкодами +
+        статус-лента пайплайна. ok: True пройден / False упал / None ещё нет."""
+        sid = params.get("session_id")
+        if not sid:
+            raise ControlError("bad_params", "нужен session_id")
+        row = db.get_session(self._con, sid)
+        if row is None:
+            raise ControlError("not_found", f"нет сессии {sid}")
+        sdir = session_dir(sid)
+        followup = self._followup_meta(sid)
+        transcript = None
+        tpath = sdir / "transcript.json"
+        if tpath.exists():
+            try:
+                transcript = json.loads(tpath.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                transcript = None
+        jobs = {r["stage"]: r for r in self._con.execute(
+            "SELECT * FROM pipeline_jobs WHERE session_id=?", (sid,))}
+
+        def job_step(name: str, stage: str, evidence: bool) -> dict:
+            # evidence — файловое доказательство пройденной стадии: job-строка
+            # могла не создаваться (прямые db-манипуляции, старые сессии).
+            job = jobs.get(stage)
+            if job is not None and job["status"] in ("failed", "failed_retry"):
+                return {"step": name, "ok": False, "at": job["updated_at"],
+                        "error": job["last_error"] or "неизвестная ошибка"}
+            if evidence or (job is not None and job["status"] == "done"):
+                return {"step": name, "ok": True,
+                        "at": job["updated_at"] if job else None, "error": None}
+            return {"step": name, "ok": None, "at": None, "error": None}
+
+        recorded_ok = row["state"] not in (State.DETECTED, State.RECORDING)
+        pipeline = [
+            {"step": "recorded", "ok": True if recorded_ok else None,
+             "at": row["ended_at"], "error": None},
+            job_step("transcribed", "transcribe", tpath.exists()),
+            job_step("summarized", "summarize", followup is not None),
+            job_step("delivered", "deliver", row["state"] == State.DELIVERED),
+        ]
+        sinks = [dict(r) for r in self._con.execute(
+            "SELECT sink, status, delivered_at, detail FROM deliveries"
+            " WHERE session_id=? ORDER BY sink", (sid,))]
+        return {"session": dict(row), "followup": followup,
+                "transcript": transcript, "pipeline": pipeline, "sinks": sinks}
+
+    def search(self, params: dict) -> dict:
+        """FTS5-поиск по транскриптам и саммари (экран 05)."""
+        return {"results": db.search_notes(self._con, params.get("query") or "")}
+
+    def resummarize(self, params: dict) -> dict:
+        """«Пересобрать саммари» (экран 06): engine=local форсит чистую Ollama,
+        claude — бустер; без engine — по текущему конфигу."""
+        sid = params.get("session_id")
+        if not sid:
+            raise ControlError("bad_params", "нужен session_id")
+        engine = params.get("engine")
+        if engine not in (None, "local", "claude"):
+            raise ControlError("bad_params", f"engine: {engine!r} (local|claude)")
+        if db.get_session(self._con, sid) is None:
+            raise ControlError("not_found", f"нет сессии {sid}")
+        if engine:
+            (session_dir(sid) / "engine_override").write_text(
+                engine, encoding="utf-8")
+        db.resummarize(self._con, sid)
+        return {"session_id": sid,
+                "state": db.get_session(self._con, sid)["state"]}
+
+    def claude_set(self, params: dict) -> dict:
+        """Тоггл Claude-бустера из дропдауна: рантайм-флаг + персист в config.env."""
+        enabled = bool(params.get("enabled"))
+        config.USE_CLAUDE_CODE = enabled
+        config.update_config_env("USE_CLAUDE_CODE",
+                                 "true" if enabled else "false")
+        logger.info("claude_set: бустер %s", "включён" if enabled else "выключен")
+        return {"enabled": enabled}
 
     def reprocess(self, params: dict) -> dict:
         sid = params.get("session_id")
@@ -168,6 +319,11 @@ class DaemonApp:
             "cancel_recording": self.cancel_recording,
             "status": self.status,
             "reprocess": self.reprocess,
+            "sessions_list": self.sessions_list,
+            "session_detail": self.session_detail,
+            "search": self.search,
+            "resummarize": self.resummarize,
+            "claude_set": self.claude_set,
             "health": self.health,
         }
 

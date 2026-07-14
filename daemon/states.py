@@ -25,6 +25,12 @@ for s in State:
 # deliver→SUMMARIZED). Джобы этой стадии сбрасываются в queued (см. db.reprocess).
 ALLOWED[State.FAILED] = {State.RECORDED, State.TRANSCRIBED, State.SUMMARIZED}
 
+# «Пересобрать саммари» (экран 06, db.resummarize): единственный выход из
+# DELIVERED — откат к TRANSCRIBED, транскрипт остаётся, summarize+deliver
+# перегоняются заново. Аудио к этому моменту могло быть удалено retention —
+# не мешает, транскрипция не перегоняется.
+ALLOWED[State.DELIVERED] = {State.TRANSCRIBED}
+
 
 def assert_transition(a: State, b: State) -> None:
     if b not in ALLOWED.get(a, set()):

@@ -33,6 +33,18 @@ def write_config_env(values: dict[str, str]) -> Path:
     return path
 
 
+def update_config_env(key: str, value: str) -> Path:
+    """Обновить один ключ в app_dir()/config.env, сохранив остальные строки
+    (write_config_env перезаписывает файл целиком — тут read-modify-write)."""
+    path = app_dir() / "config.env"
+    lines = path.read_text().splitlines() if path.exists() else []
+    lines = [ln for ln in lines if not ln.startswith(f"{key}=")]
+    lines.append(f"{key}={value}")
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(0o600)
+    return path
+
+
 def _bool(name: str, default: bool = False) -> bool:
     val = os.getenv(name, "")
     if not val:

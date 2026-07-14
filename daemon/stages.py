@@ -17,6 +17,10 @@ from daemon.paths import session_dir
 from daemon.render import render_followup
 from daemon.sinks import NoteSink, TelegramSink
 from daemon.summarizer import summarize_ollama, validate_followup
+
+# Служебные ключи followup.json вне схемы SPEC_v3 §7 (не проходят валидацию):
+# degraded — флаг fallback-а суммаризатора, engine — движок для UI Библиотеки.
+_SERVICE_KEYS = {"degraded", "engine"}
 from daemon.transcriber import Transcriber, dedupe_lines
 
 logger = logging.getLogger(__name__)
@@ -72,12 +76,21 @@ def summarize(session) -> None:
             _ollama_notified.add(session["id"])
             notify("MeetMind", f"{exc} — встреча в очереди, обработается после запуска")
         raise
-    validate_followup({k: v for k, v in followup.items() if k != "degraded"})
+    validate_followup({k: v for k, v in followup.items() if k not in _SERVICE_KEYS})
+
+    # Одноразовый выбор движка при «Пересобрать саммари» (экран 06,
+    # app.resummarize): local — бустер пропускается, claude — форсируется.
+    override_path = sdir / "engine_override"
+    override = None
+    if override_path.exists():
+        override = override_path.read_text(encoding="utf-8").strip()
+        override_path.unlink()
 
     # Claude-бустер (PLAN_v3 Task 7.4, opt-in): best-effort улучшение поверх
     # готовой Ollama-версии. Любой сбой внутри boost() → None, стадия не падает.
     engine = config.OLLAMA_MODEL
-    if config.USE_CLAUDE_CODE:
+    use_claude = config.USE_CLAUDE_CODE if override is None else override == "claude"
+    if use_claude:
         boosted = claude_booster.boost(transcript, followup, {
             "title": _title(session),
             "duration_min": _duration_min(session),
@@ -86,12 +99,23 @@ def summarize(session) -> None:
             followup = boosted
             engine = f"claude-code:{config.CLAUDE_CODE_MODEL}"
 
+    followup = dict(followup, engine=engine)
     (sdir / "followup.json").write_text(
         json.dumps(followup, ensure_ascii=False, indent=1), encoding="utf-8")
     md = render_followup(
         followup, engine=engine, title=_title(session),
         duration_min=_duration_min(session))
     (sdir / "followup.md").write_text(md, encoding="utf-8")
+
+    # FTS-индекс для поиска в Библиотеке (экран 05). Отдельный короткоживущий
+    # коннект: стадии не держат con, writer notes_fts — только summarize.
+    con = db.connect()
+    try:
+        db.index_note(con, session["id"], title=_title(session),
+                      transcript=transcript, summary=md)
+    finally:
+        con.close()
+
     logger.info("summarize %s: %d решений, %d action items%s",
                 session["id"], len(followup.get("decisions", [])),
                 len(followup.get("action_items", [])),

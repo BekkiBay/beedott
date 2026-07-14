@@ -108,6 +108,67 @@ def reprocess(con, sid: str) -> None:
     con.commit()
 
 
+def resummarize(con, sid: str) -> None:
+    """«Пересобрать саммари» (экран 06): из DELIVERED/FAILED назад в TRANSCRIBED,
+    summarize+deliver в queued, доставки сброшены в pending (идемпотентность
+    deliver иначе пропустит уже отправленные sinks). Транскрипция не трогается."""
+    set_state(con, sid, State.TRANSCRIBED)
+    con.execute(
+        "UPDATE pipeline_jobs SET status='queued', attempts=0, next_retry_at=NULL,"
+        " updated_at=? WHERE session_id=? AND stage IN ('summarize','deliver')",
+        (now(), sid))
+    con.execute(
+        "UPDATE deliveries SET status='pending', delivered_at=NULL"
+        " WHERE session_id=?", (sid,))
+    con.commit()
+
+
+# ─── notes_fts: полнотекстовый поиск по встречам (экран 05) ──────────────────
+# Writer-дисциплина (SPEC_v3 §3): notes_fts пишет только стадия summarize
+# (index_note) — один writer, как у остальных таблиц.
+
+
+def index_note(con, sid: str, *, title: str, transcript: str, summary: str) -> None:
+    """Переиндексировать сессию (delete+insert — реген не плодит дубликатов)."""
+    con.execute("DELETE FROM notes_fts WHERE session_id=?", (sid,))
+    con.execute(
+        "INSERT INTO notes_fts(session_id, title, transcript, summary)"
+        " VALUES(?,?,?,?)", (sid, title or "", transcript, summary))
+    con.commit()
+
+
+def _fts_match(query: str) -> str | None:
+    """Пользовательский запрос → безопасное FTS5 MATCH-выражение: каждое слово
+    в кавычках с '*' (prefix), операторы/кавычки пользователя не интерпретируются."""
+    import re
+    terms = re.findall(r"\w+", query, re.UNICODE)
+    if not terms:
+        return None
+    return " ".join(f'"{t}"*' for t in terms)
+
+
+def search_notes(con, query: str, *, limit: int = 50) -> list[dict]:
+    """FTS5-поиск по транскриптам и саммари. Сниппеты с маркерами [[слово]]
+    (UI подсвечивает). Колонки notes_fts: 0=session_id, 1=title, 2=transcript,
+    3=summary."""
+    match = _fts_match(query)
+    if match is None:
+        return []
+    results = []
+    for col_idx, source in ((2, "transcript"), (3, "summary")):
+        rows = con.execute(
+            f"SELECT session_id, title,"
+            f" snippet(notes_fts, {col_idx}, '[[', ']]', '…', 12) AS snip"
+            f" FROM notes_fts WHERE notes_fts MATCH ? LIMIT ?",
+            (f"{'transcript' if source == 'transcript' else 'summary'}: {match}",
+             limit)).fetchall()
+        results.extend(
+            {"session_id": r["session_id"], "title": r["title"],
+             "source": source, "snippet": r["snip"]}
+            for r in rows)
+    return results
+
+
 def next_job(con) -> sqlite3.Row | None:
     return con.execute(
         "SELECT * FROM pipeline_jobs WHERE status IN ('queued','failed_retry')"

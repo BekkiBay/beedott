@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin:0; padding:0; background:#131318; }
+  * { box-sizing:border-box; }
+  a { color:#8ab4f8; text-decoration:none; }
+  a:hover { color:#aecbfa; }
+  @keyframes mmPulse { 0%,100% { transform:scale(1); opacity:1; } 50% { transform:scale(1.3); opacity:0.45; } }
+  @keyframes mmSpin { to { transform:rotate(360deg); } }
+</style>
+</helmet>
+
+<section id="2a" data-screen-label="MeetMind Firefox extension spec" style="font-family:Roboto,-apple-system,BlinkMacSystemFont,sans-serif;padding:56px 64px 96px;color:#e8e8ee;display:flex;flex-direction:column;gap:64px;min-width:2100px">
+
+  <!-- ============ HEADER ============ -->
+  <div style="display:flex;align-items:center;gap:12px;max-width:900px">
+    <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(160deg,#2c2c34,#17171d);border:1px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;flex:none">
+      <svg width="22" height="22" viewBox="0 0 18 18"><g fill="#EA4335"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <div style="font-size:22px;font-weight:700;letter-spacing:-0.01em">MeetMind для Google Meet — Firefox-расширение</div>
+      <div style="font-size:13px;color:#9a9aa6">Детект созвона · управление локальной записью через companion-приложение · Material-стиль, чтобы не выглядеть чужеродно в Meet</div>
+    </div>
+    <div style="margin-left:16px;font-size:11px;font-weight:700;color:#8f8f9c;border:1px solid rgba(255,255,255,0.18);border-radius:6px;padding:3px 8px">2a</div>
+  </div>
+
+  <!-- ============ 01 · TOOLBAR ICON ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="1 Toolbar icon">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">01</div>
+      <div style="font-size:16px;font-weight:700">Иконка в тулбаре Firefox — 3 состояния</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Тёмная тема Firefox</div>
+        <div style="display:flex;gap:16px">
+          <!-- idle dark -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:230px;border-radius:10px;background:#1c1b22;border:1px solid rgba(255,255,255,0.08);padding:8px 10px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+              <div style="flex:1;height:28px;border-radius:6px;background:#2b2a33;display:flex;align-items:center;padding:0 10px;font-size:11px;color:#8f8f9c">meet.google.com/oxq-mzcd-vpk</div>
+              <div style="position:relative;width:30px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center" style-hover="background:rgba(255,255,255,0.1)">
+                <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(251,251,254,0.85)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+              </div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Idle</div>
+            <div style="font-size:11px;color:#7c7c88;margin-top:-6px">монохром, без бейджа</div>
+          </div>
+          <!-- recording dark -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:230px;border-radius:10px;background:#1c1b22;border:1px solid rgba(255,255,255,0.08);padding:8px 10px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+              <div style="flex:1;height:28px;border-radius:6px;background:#2b2a33;display:flex;align-items:center;padding:0 10px;font-size:11px;color:#8f8f9c">meet.google.com/oxq-mzcd-vpk</div>
+              <div style="position:relative;width:30px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center">
+                <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(251,251,254,0.85)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                <div style="position:absolute;right:0px;top:0px;min-width:14px;height:11px;border-radius:6px;background:#EA4335;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:700;color:#fff;padding:0 3px;letter-spacing:0.04em">REC</div>
+              </div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Recording</div>
+            <div style="font-size:11px;color:#7c7c88;margin-top:-6px">badge-текст «REC» через browserAction</div>
+          </div>
+          <!-- error dark -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:230px;border-radius:10px;background:#1c1b22;border:1px solid rgba(255,255,255,0.08);padding:8px 10px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+              <div style="flex:1;height:28px;border-radius:6px;background:#2b2a33;display:flex;align-items:center;padding:0 10px;font-size:11px;color:#8f8f9c">meet.google.com/oxq-mzcd-vpk</div>
+              <div style="position:relative;width:30px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center">
+                <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(251,251,254,0.45)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                <div style="position:absolute;right:2px;top:0px;width:11px;height:11px;border-radius:6px;background:#F9AB00;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#1c1b22">!</div>
+              </div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Error</div>
+            <div style="font-size:11px;color:#7c7c88;margin-top:-6px">companion не отвечает</div>
+          </div>
+        </div>
+
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c;margin-top:10px">Светлая тема Firefox</div>
+        <div style="display:flex;gap:16px">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:230px;border-radius:10px;background:#f9f9fb;border:1px solid rgba(0,0,0,0.08);padding:8px 10px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+              <div style="flex:1;height:28px;border-radius:6px;background:#e0e0e6;display:flex;align-items:center;padding:0 10px;font-size:11px;color:#5f6368">meet.google.com/oxq-mzcd-vpk</div>
+              <div style="position:relative;width:30px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center">
+                <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(21,20,26,0.8)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+              </div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Idle</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:230px;border-radius:10px;background:#f9f9fb;border:1px solid rgba(0,0,0,0.08);padding:8px 10px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+              <div style="flex:1;height:28px;border-radius:6px;background:#e0e0e6;display:flex;align-items:center;padding:0 10px;font-size:11px;color:#5f6368">meet.google.com/oxq-mzcd-vpk</div>
+              <div style="position:relative;width:30px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center">
+                <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(21,20,26,0.8)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                <div style="position:absolute;right:0px;top:0px;min-width:14px;height:11px;border-radius:6px;background:#EA4335;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:700;color:#fff;padding:0 3px;letter-spacing:0.04em">REC</div>
+              </div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Recording</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:230px;border-radius:10px;background:#f9f9fb;border:1px solid rgba(0,0,0,0.08);padding:8px 10px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+              <div style="flex:1;height:28px;border-radius:6px;background:#e0e0e6;display:flex;align-items:center;padding:0 10px;font-size:11px;color:#5f6368">meet.google.com/oxq-mzcd-vpk</div>
+              <div style="position:relative;width:30px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center">
+                <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(21,20,26,0.4)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                <div style="position:absolute;right:2px;top:0px;width:11px;height:11px;border-radius:6px;background:#F9AB00;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#fff">!</div>
+              </div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Error</div>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+        <div style="width:330px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;flex:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Микро-анимации</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Бейдж REC появляется мгновенно при старте (без анимации — API тулбара), цвет #EA4335. Иконка — template SVG, красится темой браузера.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Error: иконка приглушается до 45%, бейдж «!» жёлтый #F9AB00. Тултип: «MeetMind не запущен».</div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ============ 02 · POPUP ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="2 Popup">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">02</div>
+      <div style="font-size:16px;font-weight:700">Popup расширения — 3 состояния</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- popup dark: recording -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Тёмная · идёт запись</div>
+        <div data-screen-label="Popup dark recording" style="width:320px;border-radius:12px;background:#2b2a33;border:1px solid rgba(255,255,255,0.1);box-shadow:0 16px 44px rgba(0,0,0,0.5);color:#fbfbfe;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08)">
+            <svg width="16" height="16" viewBox="0 0 18 18"><g fill="#EA4335"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+            <div style="font-size:13px;font-weight:700;flex:1">MeetMind</div>
+            <div style="display:flex;align-items:center;gap:5px">
+              <div style="width:7px;height:7px;border-radius:50%;background:#81C995"></div>
+              <div style="font-size:11px;color:rgba(232,234,237,0.6)">Companion подключён</div>
+            </div>
+          </div>
+          <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:9px;height:9px;border-radius:50%;background:#EA4335;flex:none;animation:mmPulse 1.2s ease-in-out infinite"></div>
+              <div style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Планёрка про бету</div>
+                <div style="font-size:11px;color:rgba(232,234,237,0.55)">meet.google.com/oxq-mzcd-vpk</div>
+              </div>
+              <div style="font-size:16px;font-weight:700;color:#EA4335;font-variant-numeric:tabular-nums;flex:none">12:34</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="font-size:11px;color:rgba(232,234,237,0.55);width:90px;flex:none">Микрофон</div>
+                <div style="flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,0.14);overflow:hidden"><div style="width:66%;height:100%;border-radius:2px;background:#81C995"></div></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="font-size:11px;color:rgba(232,234,237,0.55);width:90px;flex:none">Звук вкладки</div>
+                <div style="flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,0.14);overflow:hidden"><div style="width:42%;height:100%;border-radius:2px;background:#81C995"></div></div>
+              </div>
+            </div>
+            <div style="height:36px;border-radius:18px;background:#F28B82;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" style-hover="background:#ee7a70" style-active="transform:scale(0.98)">
+              <div style="width:9px;height:9px;border-radius:2px;background:#202124"></div>
+              <div style="font-size:13px;font-weight:600;color:#202124">Остановить запись</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding-top:2px">
+              <div style="display:flex;flex-direction:column;gap:1px;flex:1">
+                <div style="font-size:12.5px">Записывать встречи автоматически</div>
+                <div style="font-size:10.5px;color:rgba(232,234,237,0.5)">Спрашивать не будем — просто начнём</div>
+              </div>
+              <sc-if value="{{ autoRecordOn }}" hint-placeholder-val="{{ false }}">
+                <div style="width:34px;height:14px;border-radius:7px;background:rgba(138,180,248,0.5);position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:-3px;left:16px;width:20px;height:20px;border-radius:50%;background:#8AB4F8;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div></div>
+              </sc-if>
+              <sc-if value="{{ autoRecordOff }}" hint-placeholder-val="{{ true }}">
+                <div style="width:34px;height:14px;border-radius:7px;background:rgba(255,255,255,0.3);position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:-3px;left:-2px;width:20px;height:20px;border-radius:50%;background:#e8eaed;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div></div>
+              </sc-if>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding:9px 16px;border-top:1px solid rgba(255,255,255,0.08)">
+            <svg width="9" height="11" viewBox="0 0 10 12"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#81C995"></path></svg>
+            <div style="font-size:10.5px;color:rgba(232,234,237,0.5);flex:1">Запись и расшифровка — на вашем Mac</div>
+            <div style="font-size:11px;color:#8AB4F8;cursor:pointer" style-hover="color:#aecbfa">Настройки</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- popup light: idle -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Светлая · idle</div>
+        <div data-screen-label="Popup light idle" style="width:320px;border-radius:12px;background:#fff;border:1px solid rgba(0,0,0,0.1);box-shadow:0 16px 44px rgba(0,0,0,0.3);color:#202124;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #e8eaed">
+            <svg width="16" height="16" viewBox="0 0 18 18"><g fill="#EA4335"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+            <div style="font-size:13px;font-weight:700;flex:1">MeetMind</div>
+            <div style="display:flex;align-items:center;gap:5px">
+              <div style="width:7px;height:7px;border-radius:50%;background:#34A853"></div>
+              <div style="font-size:11px;color:#5f6368">Companion подключён</div>
+            </div>
+          </div>
+          <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:500">Планёрка про бету</div>
+                <div style="font-size:11px;color:#5f6368">Звонок идёт · запись не ведётся</div>
+              </div>
+            </div>
+            <div style="height:36px;border-radius:18px;background:#D93025;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" style-hover="background:#c5221f" style-active="transform:scale(0.98)">
+              <div style="width:9px;height:9px;border-radius:50%;background:#fff"></div>
+              <div style="font-size:13px;font-weight:600;color:#fff">Начать запись</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding-top:2px">
+              <div style="display:flex;flex-direction:column;gap:1px;flex:1">
+                <div style="font-size:12.5px">Записывать встречи автоматически</div>
+                <div style="font-size:10.5px;color:#5f6368">Спрашивать не будем — просто начнём</div>
+              </div>
+              <sc-if value="{{ autoRecordOn }}" hint-placeholder-val="{{ false }}">
+                <div style="width:34px;height:14px;border-radius:7px;background:rgba(26,115,232,0.4);position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:-3px;left:16px;width:20px;height:20px;border-radius:50%;background:#1A73E8;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></div></div>
+              </sc-if>
+              <sc-if value="{{ autoRecordOff }}" hint-placeholder-val="{{ true }}">
+                <div style="width:34px;height:14px;border-radius:7px;background:#bdc1c6;position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:-3px;left:-2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></div></div>
+              </sc-if>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding:9px 16px;border-top:1px solid #e8eaed">
+            <svg width="9" height="11" viewBox="0 0 10 12"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#188038"></path></svg>
+            <div style="font-size:10.5px;color:#5f6368;flex:1">Запись и расшифровка — на вашем Mac</div>
+            <div style="font-size:11px;color:#1A73E8;cursor:pointer">Настройки</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- popup dark: disconnected -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Тёмная · companion не запущен</div>
+        <div data-screen-label="Popup dark disconnected" style="width:320px;border-radius:12px;background:#2b2a33;border:1px solid rgba(255,255,255,0.1);box-shadow:0 16px 44px rgba(0,0,0,0.5);color:#fbfbfe;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08)">
+            <svg width="16" height="16" viewBox="0 0 18 18"><g fill="rgba(251,251,254,0.4)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+            <div style="font-size:13px;font-weight:700;flex:1">MeetMind</div>
+            <div style="display:flex;align-items:center;gap:5px">
+              <div style="width:7px;height:7px;border-radius:50%;background:#F9AB00"></div>
+              <div style="font-size:11px;color:#F9AB00">Нет связи</div>
+            </div>
+          </div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:12px;align-items:center;text-align:center">
+            <div style="width:40px;height:40px;border-radius:50%;background:rgba(249,171,0,0.14);display:flex;align-items:center;justify-content:center">
+              <svg width="18" height="18" viewBox="0 0 14 14"><path d="M7 0.8 L13.5 12.4 H0.5 Z" fill="#F9AB00"></path><rect x="6.35" y="4.6" width="1.3" height="4" rx="0.65" fill="#2b2a33"></rect><circle cx="7" cy="10.3" r="0.8" fill="#2b2a33"></circle></svg>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:3px">
+              <div style="font-size:13px;font-weight:600">Companion-приложение не запущено</div>
+              <div style="font-size:11.5px;line-height:1.5;color:rgba(232,234,237,0.55)">Запись ведёт MeetMind на вашем Mac. Запустите его — расширение подхватит связь само.</div>
+            </div>
+            <div style="height:36px;border-radius:18px;background:#8AB4F8;display:flex;align-items:center;justify-content:center;padding:0 20px;cursor:pointer;align-self:stretch" style-hover="background:#aecbfa">
+              <div style="font-size:13px;font-weight:600;color:#202124">Запустить MeetMind</div>
+            </div>
+            <div style="font-size:10.5px;color:rgba(232,234,237,0.4)">deep-link: meetmind://launch</div>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+        <div style="width:330px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;flex:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Микро-анимации</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Popup открывается системно (без кастомной анимации). Точка записи пульсирует 1.2 s; уровни обновляются 30 fps по WebSocket от companion.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Кнопка Material: hover — затемнение, ripple от точки клика 300 ms; старт/стоп меняют текст crossfade 150 ms.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Тумблер — Material switch, 200 ms. При потере связи статус в шапке меняется на жёлтый fade 200 ms, контент — на error-состояние.</div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ============ 03 · TOAST ON JOIN ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="3 Toast on join">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">03</div>
+      <div style="font-size:16px;font-weight:700">Тост при входе в звонок</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- Meet mock with toast -->
+      <div data-screen-label="Meet page with toast" style="width:820px;height:500px;border-radius:14px;background:#202124;position:relative;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.4);flex:none">
+        <!-- tiles -->
+        <div style="position:absolute;inset:16px 16px 96px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div style="border-radius:12px;background:#3c4043;display:flex;align-items:center;justify-content:center;position:relative"><div style="width:72px;height:72px;border-radius:50%;background:#1A73E8;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:500;color:#fff">Н</div><div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:#e8eaed">Настя</div></div>
+          <div style="border-radius:12px;background:#3c4043;display:flex;align-items:center;justify-content:center;position:relative"><div style="width:72px;height:72px;border-radius:50%;background:#188038;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:500;color:#fff">Д</div><div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:#e8eaed">Дима</div></div>
+          <div style="border-radius:12px;background:#3c4043;display:flex;align-items:center;justify-content:center;position:relative"><div style="width:72px;height:72px;border-radius:50%;background:#A142F4;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:500;color:#fff">И</div><div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:#e8eaed">Игорь</div></div>
+          <div style="border-radius:12px;background:#3c4043;display:flex;align-items:center;justify-content:center;position:relative"><div style="width:72px;height:72px;border-radius:50%;background:#E8710A;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:500;color:#fff">Вы</div><div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:#e8eaed">Вы</div></div>
+        </div>
+        <!-- bottom bar -->
+        <div style="position:absolute;left:0;right:0;bottom:0;height:80px;display:flex;align-items:center;padding:0 20px;gap:16px">
+          <div style="font-size:13px;color:#e8eaed;width:180px;flex:none">14:32 · oxq-mzcd-vpk</div>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;gap:10px">
+            <div style="width:40px;height:40px;border-radius:50%;background:#3c4043;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 12 14"><path d="M6 0.8a2.4 2.4 0 0 1 2.4 2.4v3.6a2.4 2.4 0 1 1-4.8 0V3.2A2.4 2.4 0 0 1 6 0.8zm-4.5 6h1.2a3.3 3.3 0 0 0 6.6 0h1.2a4.5 4.5 0 0 1-3.9 4.4v1.6h-1.2v-1.6a4.5 4.5 0 0 1-3.9-4.4z" fill="#e8eaed"></path></svg></div>
+            <div style="width:40px;height:40px;border-radius:50%;background:#3c4043;display:flex;align-items:center;justify-content:center"><svg width="18" height="13" viewBox="0 0 16 12"><path d="M1 2.2A1.2 1.2 0 0 1 2.2 1h7.6A1.2 1.2 0 0 1 11 2.2v7.6A1.2 1.2 0 0 1 9.8 11H2.2A1.2 1.2 0 0 1 1 9.8V2.2zM12 4.4l3-2v7.2l-3-2V4.4z" fill="#e8eaed"></path></svg></div>
+            <div style="width:40px;height:40px;border-radius:50%;background:#3c4043;display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 14 14"><path d="M2 3h10v1.4H2V3zm0 3.3h10v1.4H2V6.3zm0 3.3h6v1.4H2V9.6z" fill="#e8eaed"></path></svg></div>
+            <div style="width:56px;height:40px;border-radius:20px;background:#EA4335;display:flex;align-items:center;justify-content:center"><svg width="18" height="8" viewBox="0 0 18 8"><path d="M9 0C5.4 0 2.2 1.2 0.6 3.1a1 1 0 0 0-0.1 1.2l1 1.6a1 1 0 0 0 1.3 0.35L5.6 4.9a1 1 0 0 0 0.55-0.9V2.9c1.8-0.5 4-0.5 5.8 0v1.1a1 1 0 0 0 0.55 0.9l2.8 1.35a1 1 0 0 0 1.3-0.35l1-1.6a1 1 0 0 0-0.1-1.2C15.8 1.2 12.6 0 9 0z" fill="#fff"></path></svg></div>
+          </div>
+          <div style="width:180px;flex:none"></div>
+        </div>
+        <!-- toast -->
+        <div data-screen-label="Join toast" style="position:absolute;top:16px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;background:#303134;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:10px 12px 10px 14px;box-shadow:0 10px 30px rgba(0,0,0,0.5);overflow:hidden">
+          <svg width="16" height="16" viewBox="0 0 18 18" style="flex:none"><g fill="#EA4335"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+          <div style="display:flex;flex-direction:column;gap:1px">
+            <div style="font-size:13px;font-weight:600;color:#e8eaed;white-space:nowrap">Начать запись встречи?</div>
+            <div style="font-size:11px;color:#9aa0a6;white-space:nowrap">Локально, на вашем Mac</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;margin-left:6px">
+            <div style="height:30px;border-radius:15px;background:#8AB4F8;display:flex;align-items:center;padding:0 16px;font-size:12.5px;font-weight:600;color:#202124;cursor:pointer;white-space:nowrap" style-hover="background:#aecbfa">Да</div>
+            <div style="height:30px;border-radius:15px;display:flex;align-items:center;padding:0 12px;font-size:12.5px;font-weight:600;color:#8AB4F8;cursor:pointer;white-space:nowrap" style-hover="background:rgba(138,180,248,0.12)">Нет</div>
+            <div style="height:30px;border-radius:15px;display:flex;align-items:center;padding:0 12px;font-size:12.5px;font-weight:600;color:#8AB4F8;cursor:pointer;white-space:nowrap" style-hover="background:rgba(138,180,248,0.12)">Всегда для этого звонка</div>
+          </div>
+          <div style="position:absolute;left:0;bottom:0;height:2px;width:62%;background:rgba(138,180,248,0.6)"></div>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+        <div style="width:330px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;flex:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Поведение</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Появляется сверху по центру — не трогает низ, где контролы Meet. Вход: translateY(−12 px) + fade 220 ms ease-out.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Автоскрытие 10 s — тонкий прогресс-бар внизу тоста сгорает линейно; hover ставит таймер на паузу.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">«Всегда для этого звонка» запоминает код встречи (повторяющиеся созвоны). Esc = «Нет». Не блокирует клики по странице.</div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ============ 04 · OVERLAY ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="4 Overlay">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">04</div>
+      <div style="font-size:16px;font-weight:700">Overlay на странице Meet — индикатор и мини-панель</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- Meet mock with pill + expanded panel -->
+      <div data-screen-label="Meet page with overlay" style="width:820px;height:500px;border-radius:14px;background:#202124;position:relative;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.4);flex:none">
+        <div style="position:absolute;inset:16px 16px 96px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div style="border-radius:12px;background:#3c4043;display:flex;align-items:center;justify-content:center;position:relative"><div style="width:72px;height:72px;border-radius:50%;background:#1A73E8;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:500;color:#fff">Н</div><div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:#e8eaed">Настя</div></div>
+          <div style="border-radius:12px;background:#3c4043;display:flex;align-items:center;justify-content:center;position:relative"><div style="width:72px;height:72px;border-radius:50%;background:#188038;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:500;color:#fff">Д</div><div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:#e8eaed">Дима</div></div>
+          <div style="border-radius:12px;background:#3c4043;display:flex;align-items:center;justify-content:center;position:relative"><div style="width:72px;height:72px;border-radius:50%;background:#A142F4;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:500;color:#fff">И</div><div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:#e8eaed">Игорь</div></div>
+          <div style="border-radius:12px;background:#3c4043;display:flex;align-items:center;justify-content:center;position:relative"><div style="width:72px;height:72px;border-radius:50%;background:#E8710A;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:500;color:#fff">Вы</div><div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:#e8eaed">Вы</div></div>
+        </div>
+        <div style="position:absolute;left:0;right:0;bottom:0;height:80px;display:flex;align-items:center;padding:0 20px;gap:16px">
+          <div style="font-size:13px;color:#e8eaed;width:180px;flex:none">14:47 · oxq-mzcd-vpk</div>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;gap:10px">
+            <div style="width:40px;height:40px;border-radius:50%;background:#3c4043;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 12 14"><path d="M6 0.8a2.4 2.4 0 0 1 2.4 2.4v3.6a2.4 2.4 0 1 1-4.8 0V3.2A2.4 2.4 0 0 1 6 0.8zm-4.5 6h1.2a3.3 3.3 0 0 0 6.6 0h1.2a4.5 4.5 0 0 1-3.9 4.4v1.6h-1.2v-1.6a4.5 4.5 0 0 1-3.9-4.4z" fill="#e8eaed"></path></svg></div>
+            <div style="width:40px;height:40px;border-radius:50%;background:#3c4043;display:flex;align-items:center;justify-content:center"><svg width="18" height="13" viewBox="0 0 16 12"><path d="M1 2.2A1.2 1.2 0 0 1 2.2 1h7.6A1.2 1.2 0 0 1 11 2.2v7.6A1.2 1.2 0 0 1 9.8 11H2.2A1.2 1.2 0 0 1 1 9.8V2.2zM12 4.4l3-2v7.2l-3-2V4.4z" fill="#e8eaed"></path></svg></div>
+            <div style="width:40px;height:40px;border-radius:50%;background:#3c4043;display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 14 14"><path d="M2 3h10v1.4H2V3zm0 3.3h10v1.4H2V6.3zm0 3.3h6v1.4H2V9.6z" fill="#e8eaed"></path></svg></div>
+            <div style="width:56px;height:40px;border-radius:20px;background:#EA4335;display:flex;align-items:center;justify-content:center"><svg width="18" height="8" viewBox="0 0 18 8"><path d="M9 0C5.4 0 2.2 1.2 0.6 3.1a1 1 0 0 0-0.1 1.2l1 1.6a1 1 0 0 0 1.3 0.35L5.6 4.9a1 1 0 0 0 0.55-0.9V2.9c1.8-0.5 4-0.5 5.8 0v1.1a1 1 0 0 0 0.55 0.9l2.8 1.35a1 1 0 0 0 1.3-0.35l1-1.6a1 1 0 0 0-0.1-1.2C15.8 1.2 12.6 0 9 0z" fill="#fff"></path></svg></div>
+          </div>
+          <div style="width:180px;flex:none"></div>
+        </div>
+        <!-- collapsed pill -->
+        <div data-screen-label="Overlay pill collapsed" style="position:absolute;top:16px;right:16px;height:28px;border-radius:14px;background:rgba(32,33,36,0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.14);display:flex;align-items:center;gap:7px;padding:0 11px 0 8px;box-shadow:0 4px 14px rgba(0,0,0,0.4);cursor:grab">
+          <svg width="7" height="12" viewBox="0 0 7 12" style="opacity:0.4"><g fill="#e8eaed"><circle cx="1.5" cy="2" r="1.1"></circle><circle cx="5.5" cy="2" r="1.1"></circle><circle cx="1.5" cy="6" r="1.1"></circle><circle cx="5.5" cy="6" r="1.1"></circle><circle cx="1.5" cy="10" r="1.1"></circle><circle cx="5.5" cy="10" r="1.1"></circle></g></svg>
+          <div style="width:8px;height:8px;border-radius:50%;background:#EA4335;animation:mmPulse 1.2s ease-in-out infinite"></div>
+          <div style="font-size:11px;font-weight:700;color:#e8eaed;letter-spacing:0.05em">REC</div>
+          <div style="font-size:11px;font-weight:500;color:#9aa0a6;font-variant-numeric:tabular-nums">12:34</div>
+        </div>
+      </div>
+
+      <!-- expanded panel zoom -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Клик по плашке → мини-панель</div>
+        <div data-screen-label="Overlay panel expanded" style="width:252px;border-radius:14px;background:rgba(32,33,36,0.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.14);box-shadow:0 12px 34px rgba(0,0,0,0.5);color:#e8eaed;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:9px 12px 8px;cursor:grab">
+            <svg width="7" height="12" viewBox="0 0 7 12" style="opacity:0.4;flex:none"><g fill="#e8eaed"><circle cx="1.5" cy="2" r="1.1"></circle><circle cx="5.5" cy="2" r="1.1"></circle><circle cx="1.5" cy="6" r="1.1"></circle><circle cx="5.5" cy="6" r="1.1"></circle><circle cx="1.5" cy="10" r="1.1"></circle><circle cx="5.5" cy="10" r="1.1"></circle></g></svg>
+            <div style="width:8px;height:8px;border-radius:50%;background:#EA4335;flex:none;animation:mmPulse 1.2s ease-in-out infinite"></div>
+            <div style="font-size:12px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Планёрка про бету</div>
+            <div style="font-size:12px;font-weight:600;color:#EA4335;font-variant-numeric:tabular-nums;flex:none">12:34</div>
+            <svg width="10" height="6" viewBox="0 0 10 6" style="flex:none;opacity:0.5"><path d="M1 1l4 4 4-4" stroke="#e8eaed" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </div>
+          <div style="display:flex;gap:6px;padding:0 12px 10px">
+            <div style="flex:1;height:32px;border-radius:16px;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer" style-hover="background:rgba(255,255,255,0.16)">
+              <svg width="9" height="11" viewBox="0 0 9 11"><g fill="#e8eaed"><rect x="0.5" y="0.5" width="3" height="10" rx="1"></rect><rect x="5.5" y="0.5" width="3" height="10" rx="1"></rect></g></svg>
+              <div style="font-size:12px;font-weight:600">Пауза</div>
+            </div>
+            <div style="flex:1;height:32px;border-radius:16px;background:#F28B82;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer" style-hover="background:#ee7a70">
+              <div style="width:8px;height:8px;border-radius:2px;background:#202124"></div>
+              <div style="font-size:12px;font-weight:600;color:#202124">Стоп</div>
+            </div>
+          </div>
+          <div style="height:1px;background:rgba(255,255,255,0.1);margin:0 12px"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer" style-hover="background:rgba(255,255,255,0.06)">
+            <svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 0.9l1.75 3.9 4.25 0.45-3.2 2.85 0.9 4.2L7 10.15 3.3 12.3l0.9-4.2L1 5.25l4.25-0.45L7 0.9z" fill="#FDD663"></path></svg>
+            <div style="display:flex;flex-direction:column;gap:0;flex:1">
+              <div style="font-size:12px;font-weight:500">Отметить момент</div>
+              <div style="font-size:10.5px;color:#9aa0a6">попадёт в фоллоу-ап с таймкодом</div>
+            </div>
+            <div style="font-size:10px;color:#9aa0a6;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 5px">⌥M</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding:7px 12px 9px;border-top:1px solid rgba(255,255,255,0.1)">
+            <svg width="8" height="10" viewBox="0 0 10 12"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#81C995"></path></svg>
+            <div style="font-size:10px;color:#9aa0a6">Пишем локально · мик + звук вкладки</div>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+        <div style="width:330px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;flex:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Микро-анимации и правила</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Плашка живёт в углах верхней половины экрана; drag — свободный, отпускание примагничивает к ближайшему углу spring 300 ms. Позиция запоминается per-domain.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Клик разворачивает панель: высота анимируется 200 ms ease-out, плашка морфится в шапку. Клик по шеврону/вне панели — сворачивает.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">«Отметить момент»: звезда вспыхивает scale 1→1.4→1 (350 ms), от неё отлетает чип «+12:34» вверх fade. Пауза: точка перестаёт пульсировать, таймер мигает 1 Hz.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Низ экрана (контролы Meet) — запретная зона. При включении демонстрации экрана плашка сама уходит в правый верхний угол.</div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ============ 05 · ERROR ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="5 Error state">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">05</div>
+      <div style="font-size:16px;font-weight:700">Ошибка — companion-приложение не запущено</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Плашка на странице Meet (тот же угол)</div>
+        <div data-screen-label="Error plate" style="width:300px;border-radius:14px;background:rgba(32,33,36,0.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(249,171,0,0.4);box-shadow:0 12px 34px rgba(0,0,0,0.5);color:#e8eaed;padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:center;gap:9px">
+            <svg width="16" height="16" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.8 L13.5 12.4 H0.5 Z" fill="#F9AB00"></path><rect x="6.35" y="4.6" width="1.3" height="4" rx="0.65" fill="#202124"></rect><circle cx="7" cy="10.3" r="0.8" fill="#202124"></circle></svg>
+            <div style="display:flex;flex-direction:column;gap:1px;flex:1">
+              <div style="font-size:12.5px;font-weight:600">MeetMind не запущен</div>
+              <div style="font-size:11px;color:#9aa0a6">Запись этой встречи не идёт</div>
+            </div>
+            <svg width="9" height="9" viewBox="0 0 12 12" style="flex:none;opacity:0.5;cursor:pointer"><path d="M2 2l8 8M10 2l-8 8" stroke="#e8eaed" stroke-width="1.6" stroke-linecap="round"></path></svg>
+          </div>
+          <div style="height:32px;border-radius:16px;background:#8AB4F8;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer" style-hover="background:#aecbfa">
+            <svg width="11" height="11" viewBox="0 0 12 12"><path d="M2 1.5l8 4.5-8 4.5V1.5z" fill="#202124"></path></svg>
+            <div style="font-size:12.5px;font-weight:600;color:#202124">Запустить MeetMind</div>
+          </div>
+          <div style="font-size:10px;color:#9aa0a6;text-align:center">meetmind://launch · подключимся автоматически</div>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+        <div style="width:330px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;flex:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Поведение</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Показывается на месте REC-плашки, лёгкое покачивание ±2° один раз при появлении. Не автоскрывается — но закрывается крестиком (до конца звонка).</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">После deep-link расширение поллит порт companion; при коннекте плашка морфится в обычный индикатор + зелёная вспышка статуса 400 ms.</div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- architecture note -->
+  <div style="max-width:900px;background:rgba(138,180,248,0.06);border:1px solid rgba(138,180,248,0.2);border-radius:12px;padding:16px 20px;display:flex;gap:12px">
+    <svg width="16" height="16" viewBox="0 0 14 14" style="flex:none;margin-top:2px"><circle cx="7" cy="7" r="6.4" fill="none" stroke="#8AB4F8" stroke-width="1.2"></circle><rect x="6.35" y="6" width="1.3" height="4.4" rx="0.65" fill="#8AB4F8"></rect><circle cx="7" cy="3.9" r="0.8" fill="#8AB4F8"></circle></svg>
+    <div style="font-size:12.5px;line-height:1.6;color:#b9b9c4">Архитектурная заметка: сейчас детект встреч планируется через процессы/CoreAudio (M5), браузерные — по URL-паттернам. Если расширение становится реальным триггером записи (WebSocket/Native Messaging с companion) — это отдельный milestone: протокол, pairing, права. Скажите, когда захотите спланировать.</div>
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;autoRecord&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Состояния&quot; },
+  &quot;showNotes&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Презентация&quot; }
+}">
+class Component extends DCLogic {
+  renderVals() {
+    const autoRecordOn = this.props.autoRecord ?? false;
+    return {
+      showNotes: this.props.showNotes ?? true,
+      autoRecordOn: autoRecordOn,
+      autoRecordOff: !autoRecordOn
+    };
+  }
+}
+</script>
+</body>
+</html>

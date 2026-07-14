@@ -1,0 +1,1402 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+  html, body { margin:0; padding:0; background:#131318; }
+  * { box-sizing:border-box; }
+  a { color:#6ea8ff; text-decoration:none; }
+  a:hover { color:#9cc4ff; }
+  @keyframes mmPulse { 0%,100% { transform:scale(1); opacity:1; } 50% { transform:scale(1.3); opacity:0.45; } }
+  @keyframes mmSpin { to { transform:rotate(360deg); } }
+</style>
+</helmet>
+
+<section id="3a" data-screen-label="MeetMind library spec" style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;padding:56px 64px 40px;color:#e8e8ee;display:flex;flex-direction:column;gap:64px;min-width:2450px;border-bottom:1px solid rgba(255,255,255,0.08)">
+
+  <!-- ============ HEADER T3 ============ -->
+  <div style="display:flex;align-items:center;gap:12px;max-width:900px">
+    <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(160deg,#2c2c34,#17171d);border:1px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;flex:none">
+      <svg width="22" height="22" viewBox="0 0 18 18"><g fill="#FF453A"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <div style="font-size:22px;font-weight:700;letter-spacing:-0.02em">Центр наблюдения — Библиотека встреч</div>
+      <div style="font-size:13px;color:#9a9aa6">Экраны 05–06 · поиск по транскриптам (FTS5) · карточка встречи с транскриптом и пайплайном · базовый макет — ниже (<a href="#1a">1a</a>)</div>
+    </div>
+    <div style="margin-left:16px;font-size:11px;font-weight:700;color:#8f8f9c;border:1px solid rgba(255,255,255,0.18);border-radius:6px;padding:3px 8px">3a</div>
+  </div>
+
+  <!-- ============ 05 · LIBRARY ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="5 Library">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">05</div>
+      <div style="font-size:16px;font-weight:700">Библиотека встреч — окно 720×520</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- LIBRARY DARK -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Тёмная · список</div>
+        <div style="width:776px;border-radius:16px;background:#0e0e16;background-image:radial-gradient(520px 340px at 20% 10%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(440px 300px at 85% 95%,rgba(10,132,255,0.3),transparent 60%);padding:28px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+          <div data-screen-label="Library dark" style="border-radius:12px;background:rgba(30,30,34,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 24px 60px rgba(0,0,0,0.55);color:#f2f2f7;overflow:hidden">
+            <div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.07)">
+              <div style="display:flex;gap:7px;width:70px;flex:none"><div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div></div>
+              <div style="flex:1;text-align:center;font-size:12px;font-weight:600;color:rgba(235,235,245,0.55)">Встречи</div>
+              <div style="width:70px;flex:none"></div>
+            </div>
+            <!-- toolbar -->
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.07)">
+              <div style="flex:1;height:28px;border-radius:7px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:7px;padding:0 10px">
+                <svg width="12" height="12" viewBox="0 0 14 14"><circle cx="6" cy="6" r="4.4" fill="none" stroke="rgba(235,235,245,0.45)" stroke-width="1.5"></circle><path d="M9.4 9.4l3 3" stroke="rgba(235,235,245,0.45)" stroke-width="1.5" stroke-linecap="round"></path></svg>
+                <div style="font-size:12px;color:rgba(235,235,245,0.4)">Найти по словам из встречи…</div>
+              </div>
+              <div style="display:flex;gap:5px;flex:none">
+                <div style="height:24px;border-radius:12px;background:#0A84FF;display:flex;align-items:center;padding:0 11px;font-size:11.5px;font-weight:600;color:#fff;cursor:pointer">Все</div>
+                <div style="height:24px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;padding:0 11px;font-size:11.5px;color:rgba(235,235,245,0.7);cursor:pointer" style-hover="background:rgba(255,255,255,0.14)">Сегодня</div>
+                <div style="height:24px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;padding:0 11px;font-size:11.5px;color:rgba(235,235,245,0.7);cursor:pointer" style-hover="background:rgba(255,255,255,0.14)">Неделя</div>
+                <div style="height:24px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;gap:5px;padding:0 11px;font-size:11.5px;color:rgba(235,235,245,0.7);cursor:pointer" style-hover="background:rgba(255,255,255,0.14)">С ошибками<div style="min-width:15px;height:15px;border-radius:8px;background:rgba(255,159,10,0.2);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#FF9F0A">1</div></div>
+              </div>
+              <div style="font-size:11px;color:rgba(235,235,245,0.45);flex:none;margin-left:4px">47 встреч · 38 часов</div>
+            </div>
+            <!-- list -->
+            <div style="display:flex;flex-direction:column;padding:4px 6px 8px">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45);padding:8px 10px 4px">Сегодня</div>
+              <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ meetingName }}</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.45)">14:00 · 42 мин · Telegram ✓ · Obsidian ✓</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex:none">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><path d="M7 0.5l1.5 4.2L13 6.2l-4.5 1.5L7 12l-1.5-4.3L1 6.2l4.5-1.5L7 0.5z" fill="#D97757"></path></svg>
+                  <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.6);background:rgba(255,255,255,0.08);border-radius:5px;padding:2px 7px">3 задачи</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <div style="width:14px;height:14px;flex:none;animation:mmSpin 1s linear infinite"><svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.6" fill="none" stroke="rgba(235,235,245,0.2)" stroke-width="2"></circle><circle cx="7" cy="7" r="5.6" fill="none" stroke="#0A84FF" stroke-width="2" stroke-linecap="round" stroke-dasharray="12 24"></circle></svg></div>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">1:1 с Настей</div>
+                  <div style="font-size:11px;color:#64AFFF">Транскрипция · 64%</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex:none">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" fill="none" stroke="rgba(235,235,245,0.4)" stroke-width="1.4"></rect><rect x="4.5" y="4.5" width="5" height="5" rx="1" fill="rgba(235,235,245,0.4)"></rect></svg>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.35)">—</div>
+                </div>
+              </div>
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45);padding:10px 10px 4px">Вчера</div>
+              <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Синк по бете</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.45)">12:00 · 28 мин · Telegram ✓</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex:none">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" fill="none" stroke="rgba(235,235,245,0.4)" stroke-width="1.4"></rect><rect x="4.5" y="4.5" width="5" height="5" rx="1" fill="rgba(235,235,245,0.4)"></rect></svg>
+                  <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.6);background:rgba(255,255,255,0.08);border-radius:5px;padding:2px 7px">5 задач</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.8 L13.5 12.4 H0.5 Z" fill="#FF9F0A"></path><rect x="6.35" y="4.6" width="1.3" height="4" rx="0.65" fill="#1c1c20"></rect><circle cx="7" cy="10.3" r="0.8" fill="#1c1c20"></circle></svg>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Планирование спринта</div>
+                  <div style="font-size:11px;color:#FF9F0A">Ошибка отправки в Telegram — нажмите, чтобы повторить</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex:none">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" fill="none" stroke="rgba(235,235,245,0.4)" stroke-width="1.4"></rect><rect x="4.5" y="4.5" width="5" height="5" rx="1" fill="rgba(235,235,245,0.4)"></rect></svg>
+                  <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.6);background:rgba(255,255,255,0.08);border-radius:5px;padding:2px 7px">2 задачи</div>
+                </div>
+              </div>
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45);padding:10px 10px 4px">12 июля</div>
+              <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Демо для инвесторов</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.45)">16:30 · 55 мин · Obsidian ✓</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex:none">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><path d="M7 0.5l1.5 4.2L13 6.2l-4.5 1.5L7 12l-1.5-4.3L1 6.2l4.5-1.5L7 0.5z" fill="#D97757"></path></svg>
+                  <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.6);background:rgba(255,255,255,0.08);border-radius:5px;padding:2px 7px">7 задач</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Ретро спринта 14</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.45)">11:00 · 47 мин · Telegram ✓ · Obsidian ✓</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex:none">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" fill="none" stroke="rgba(235,235,245,0.4)" stroke-width="1.4"></rect><rect x="4.5" y="4.5" width="5" height="5" rx="1" fill="rgba(235,235,245,0.4)"></rect></svg>
+                  <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.6);background:rgba(255,255,255,0.08);border-radius:5px;padding:2px 7px">4 задачи</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LIBRARY LIGHT: SEARCH -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Светлая · результаты поиска</div>
+        <div style="width:776px;border-radius:16px;background:#dfe4f0;background-image:radial-gradient(520px 340px at 20% 10%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(440px 300px at 85% 95%,rgba(120,160,255,0.45),transparent 60%);padding:28px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+          <div data-screen-label="Library light search" style="border-radius:12px;background:rgba(250,250,253,0.88);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);box-shadow:0 24px 60px rgba(0,0,0,0.3);color:#1d1d1f;overflow:hidden">
+            <div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(0,0,0,0.06)">
+              <div style="display:flex;gap:7px;width:70px;flex:none"><div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div></div>
+              <div style="flex:1;text-align:center;font-size:12px;font-weight:600;color:rgba(60,60,67,0.6)">Встречи</div>
+              <div style="width:70px;flex:none"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid rgba(0,0,0,0.06)">
+              <div style="flex:1;height:28px;border-radius:7px;background:#fff;border:1px solid rgba(0,0,0,0.15);box-shadow:0 0 0 3px rgba(0,122,255,0.18);display:flex;align-items:center;gap:7px;padding:0 10px">
+                <svg width="12" height="12" viewBox="0 0 14 14"><circle cx="6" cy="6" r="4.4" fill="none" stroke="rgba(60,60,67,0.5)" stroke-width="1.5"></circle><path d="M9.4 9.4l3 3" stroke="rgba(60,60,67,0.5)" stroke-width="1.5" stroke-linecap="round"></path></svg>
+                <div style="font-size:12px;color:#1d1d1f;flex:1">рассинхрон</div>
+                <div style="width:14px;height:14px;border-radius:50%;background:rgba(0,0,0,0.15);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:9px;color:#fff;font-weight:700">✕</div>
+              </div>
+              <div style="display:flex;gap:5px;flex:none">
+                <div style="height:24px;border-radius:12px;background:#007AFF;display:flex;align-items:center;padding:0 11px;font-size:11.5px;font-weight:600;color:#fff;cursor:pointer">Все</div>
+                <div style="height:24px;border-radius:12px;background:rgba(0,0,0,0.06);display:flex;align-items:center;padding:0 11px;font-size:11.5px;color:rgba(60,60,67,0.75);cursor:pointer">Сегодня</div>
+                <div style="height:24px;border-radius:12px;background:rgba(0,0,0,0.06);display:flex;align-items:center;padding:0 11px;font-size:11.5px;color:rgba(60,60,67,0.75);cursor:pointer">Неделя</div>
+                <div style="height:24px;border-radius:12px;background:rgba(0,0,0,0.06);display:flex;align-items:center;gap:5px;padding:0 11px;font-size:11.5px;color:rgba(60,60,67,0.75);cursor:pointer">С ошибками<div style="min-width:15px;height:15px;border-radius:8px;background:rgba(255,149,0,0.16);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#C93400">1</div></div>
+              </div>
+              <div style="font-size:11px;color:rgba(60,60,67,0.5);flex:none;margin-left:4px">3 совпадения</div>
+            </div>
+            <div style="display:flex;flex-direction:column;padding:6px 6px 10px">
+              <div style="display:flex;flex-direction:column;gap:3px;padding:9px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(0,0,0,0.05)">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="font-size:13px;font-weight:600;flex:1">Планирование спринта</div>
+                  <div style="font-size:11px;color:rgba(60,60,67,0.5)">Вчера · транскрипт · <span style="font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:10.5px">00:14:02</span></div>
+                </div>
+                <div style="font-size:12px;line-height:1.5;color:rgba(60,60,67,0.75)">…Дима: звук вкладки уходит в <span style="background:rgba(255,204,0,0.4);border-radius:3px;padding:0 2px;font-weight:600;color:#1d1d1f">рассинхрон</span> после двадцатой минуты, буфер CoreAudio переполняется…</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:3px;padding:9px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(0,0,0,0.05)">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="font-size:13px;font-weight:600;flex:1">{{ meetingName }}</div>
+                  <div style="font-size:11px;color:rgba(60,60,67,0.5)">Сегодня · саммари</div>
+                </div>
+                <div style="font-size:12px;line-height:1.5;color:rgba(60,60,67,0.75)">…Дима — фикс <span style="background:rgba(255,204,0,0.4);border-radius:3px;padding:0 2px;font-weight:600;color:#1d1d1f">рассинхрона</span> системного звука · до 21 июля…</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:3px;padding:9px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(0,0,0,0.05)">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="font-size:13px;font-weight:600;flex:1">Синк по бете</div>
+                  <div style="font-size:11px;color:rgba(60,60,67,0.5)">Вчера · транскрипт · <span style="font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:10.5px">00:03:41</span></div>
+                </div>
+                <div style="font-size:12px;line-height:1.5;color:rgba(60,60,67,0.75)">…Настя: в тестовой записи опять был <span style="background:rgba(255,204,0,0.4);border-radius:3px;padding:0 2px;font-weight:600;color:#1d1d1f">рассинхрон</span> на длинных Zoom-звонках, надо воспроизвести…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- empty states + notes -->
+      <div style="display:flex;flex-direction:column;gap:20px;width:340px;flex:none">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Пустые состояния</div>
+          <div style="width:340px;border-radius:14px;background:#0e0e16;background-image:radial-gradient(300px 200px at 25% 15%,rgba(94,92,230,0.4),transparent 65%);padding:14px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+            <div data-screen-label="Library empty" style="border-radius:12px;background:rgba(30,30,34,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);padding:26px 20px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;color:#f2f2f7">
+              <svg width="26" height="26" viewBox="0 0 18 18"><g fill="rgba(235,235,245,0.3)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+              <div style="font-size:13px;font-weight:600">Пока ни одной встречи</div>
+              <div style="font-size:11.5px;line-height:1.5;color:rgba(235,235,245,0.5)">Нажмите ⌘⇧R или кнопку в меню — первая встреча появится здесь сама.</div>
+            </div>
+          </div>
+          <div style="width:340px;border-radius:14px;background:#dfe4f0;background-image:radial-gradient(300px 200px at 25% 15%,rgba(255,255,255,0.95),transparent 65%);padding:14px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+            <div data-screen-label="Search empty" style="border-radius:12px;background:rgba(250,250,253,0.88);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);padding:26px 20px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;color:#1d1d1f">
+              <svg width="24" height="24" viewBox="0 0 14 14"><circle cx="6" cy="6" r="4.4" fill="none" stroke="rgba(60,60,67,0.3)" stroke-width="1.5"></circle><path d="M9.4 9.4l3 3" stroke="rgba(60,60,67,0.3)" stroke-width="1.5" stroke-linecap="round"></path></svg>
+              <div style="font-size:13px;font-weight:600">Ничего не нашлось</div>
+              <div style="font-size:11.5px;line-height:1.5;color:rgba(60,60,67,0.55)">По запросу «синхранизация» совпадений нет. Поиск смотрит во все слова транскриптов и саммари.</div>
+              <div style="font-size:12px;font-weight:600;color:#007AFF;cursor:pointer;margin-top:2px">Сбросить поиск</div>
+            </div>
+          </div>
+        </div>
+
+        <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Микро-анимации</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Окно открывается из меню scale 0.98→1 + fade 180 ms. Дневные группы появляются каскадом 40 ms; hover строки — фон 120 ms.</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Поиск live, debounce 150 ms; список морфится в сниппеты crossfade 150 ms, подсветка слов вспыхивает fade 120 ms. Клик по сниппету открывает карточку и скроллит к таймкоду.</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Чипы фильтров — spring 200 ms; счётчик «47 встреч» обновляется crossfade 150 ms. Строки в обработке живут: спиннер + % тикают на месте.</div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 06 · MEETING CARD ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="6 Meeting card">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">06</div>
+      <div style="font-size:16px;font-weight:700">Карточка встречи — табы, действия, пайплайн</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- CARD DARK: FOLLOW-UP TAB -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Тёмная · таб «Фоллоу-ап» · пайплайн ок</div>
+        <div style="width:776px;border-radius:16px;background:#0e0e16;background-image:radial-gradient(520px 340px at 20% 10%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(440px 300px at 85% 95%,rgba(10,132,255,0.3),transparent 60%);padding:28px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+          <div data-screen-label="Meeting card dark" style="border-radius:12px;background:rgba(30,30,34,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 24px 60px rgba(0,0,0,0.55);color:#f2f2f7;overflow:hidden">
+            <div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.07)">
+              <div style="display:flex;gap:7px;width:70px;flex:none"><div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div></div>
+              <div style="flex:1;text-align:center;font-size:12px;font-weight:600;color:rgba(235,235,245,0.55)">{{ meetingName }}</div>
+              <div style="width:70px;flex:none"></div>
+            </div>
+            <div style="padding:18px 24px 0;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;align-items:flex-start;gap:12px">
+                <div style="display:flex;flex-direction:column;gap:3px;flex:1">
+                  <div style="font-size:18px;font-weight:700;letter-spacing:-0.01em">{{ meetingName }}</div>
+                  <div style="font-size:12px;color:rgba(235,235,245,0.5)">Сегодня, 14:00 · 42 мин · Настя, Дима, Игорь</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;background:rgba(48,209,88,0.14);border:1px solid rgba(48,209,88,0.25);border-radius:7px;padding:5px 10px;flex:none">
+                  <svg width="9" height="11" viewBox="0 0 10 12"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#30D158"></path></svg>
+                  <div style="font-size:11px;font-weight:600;color:#30D158">Локально · Whisper large-v3</div>
+                </div>
+              </div>
+              <div style="display:flex;background:rgba(255,255,255,0.08);border-radius:8px;padding:2px;align-self:flex-start">
+                <div style="font-size:12px;font-weight:600;padding:5px 16px;border-radius:6px;background:rgba(255,255,255,0.16);box-shadow:0 1px 2px rgba(0,0,0,0.25);cursor:pointer">Фоллоу-ап</div>
+                <div style="font-size:12px;font-weight:500;padding:5px 16px;border-radius:6px;color:rgba(235,235,245,0.6);cursor:pointer" style-hover="color:#f2f2f7">Транскрипт</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45)">Контекст</div>
+                <div style="font-size:13px;line-height:1.55;color:rgba(235,235,245,0.85)">Обсуждали запуск беты: скоуп v0.9, приоритет багов транскрипции и план анонса. Спорили про Windows-версию — решили не тащить её в первый релиз.</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45)">Решения</div>
+                <div style="display:flex;flex-direction:column;gap:5px">
+                  <div style="display:flex;gap:9px;align-items:baseline"><div style="width:5px;height:5px;border-radius:2px;background:#0A84FF;flex:none;transform:translateY(-2px)"></div><div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.85)">Бета выходит 28 июля, только macOS</div></div>
+                  <div style="display:flex;gap:9px;align-items:baseline"><div style="width:5px;height:5px;border-radius:2px;background:#0A84FF;flex:none;transform:translateY(-2px)"></div><div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.85)">Claude-бустер остаётся выключенным по умолчанию</div></div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45)">Action items</div>
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:9px 12px">
+                    <div style="width:15px;height:15px;border-radius:4px;border:1.5px solid rgba(235,235,245,0.35);flex:none;cursor:pointer"></div>
+                    <div style="font-size:13px;flex:1"><span style="font-weight:600">Настя</span> — лендинг беты</div>
+                    <div style="font-size:11px;font-weight:600;color:#FF9F0A;background:rgba(255,159,10,0.13);border-radius:5px;padding:3px 8px;flex:none">до 18 июля</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:9px 12px">
+                    <div style="width:15px;height:15px;border-radius:4px;border:1.5px solid rgba(235,235,245,0.35);flex:none;cursor:pointer"></div>
+                    <div style="font-size:13px;flex:1"><span style="font-weight:600">Дима</span> — фикс рассинхрона системного звука</div>
+                    <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.55);background:rgba(255,255,255,0.08);border-radius:5px;padding:3px 8px;flex:none">до 21 июля</div>
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px;padding-bottom:2px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45)">Открытые вопросы</div>
+                <div style="display:flex;gap:9px;align-items:baseline"><div style="width:5px;height:5px;border-radius:50%;background:rgba(235,235,245,0.35);flex:none;transform:translateY(-2px)"></div><div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.85)">Кто ведёт бета-чат с первыми пользователями?</div></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:12px 0 14px;border-top:1px solid rgba(255,255,255,0.07)">
+                <div style="display:flex;align-items:center;gap:7px;height:30px;border-radius:8px;background:#0A84FF;padding:0 13px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:#0974df">
+                  <svg width="12" height="12" viewBox="0 0 14 14"><path d="M7 0.8l5.6 3.2v6L7 13.2 1.4 10v-6L7 0.8zm0 2L3.2 5v4L7 11.2 10.8 9V5L7 2.8z" fill="#fff"></path></svg>
+                  <div style="font-size:12.5px;font-weight:600;color:#fff">Открыть в Obsidian</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px;height:30px;border-radius:8px;background:rgba(255,255,255,0.1);padding:0 13px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:rgba(255,255,255,0.16)">
+                  <svg width="12" height="12" viewBox="0 0 14 14"><path d="M13.2 0.8L0.9 5.8c-0.6 0.25-0.55 1.05 0.05 1.25l3.05 1 1.15 3.55c0.2 0.6 0.95 0.7 1.3 0.2l1.7-2.4 3.1 2.3c0.5 0.35 1.2 0.1 1.3-0.5l1.7-9.4c0.1-0.65-0.5-1.15-1.05-0.9zM4.6 8.2l6.4-4.9-4.9 5.7-0.1 2-1.4-2.8z" fill="rgba(235,235,245,0.9)"></path></svg>
+                  <div style="font-size:12.5px;font-weight:600;color:rgba(235,235,245,0.9)">Переслать</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px;height:30px;border-radius:8px;background:rgba(255,255,255,0.1);padding:0 13px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:rgba(255,255,255,0.16)">
+                  <svg width="12" height="12" viewBox="0 0 14 14"><path d="M12.1 5.2A5.5 5.5 0 0 0 2 4.4L1 2.6v4h4L3.3 5.2a4.1 4.1 0 0 1 7.5 0.6l1.3-0.6zM1.9 8.8a5.5 5.5 0 0 0 10.1 0.8l1 1.8v-4H9l1.7 1.4a4.1 4.1 0 0 1-7.5-0.6l-1.3 0.6z" fill="rgba(235,235,245,0.9)"></path></svg>
+                  <div style="font-size:12.5px;font-weight:600;color:rgba(235,235,245,0.9)">Пересобрать саммари</div>
+                  <svg width="8" height="5" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="rgba(235,235,245,0.6)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <div style="flex:1"></div>
+                <div style="display:flex;align-items:center;gap:7px;height:30px;border-radius:8px;padding:0 10px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:rgba(255,255,255,0.08)">
+                  <svg width="13" height="11" viewBox="0 0 14 12"><path d="M1 2.4A1.4 1.4 0 0 1 2.4 1h3l1.2 1.6h5A1.4 1.4 0 0 1 13 4v5.6A1.4 1.4 0 0 1 11.6 11H2.4A1.4 1.4 0 0 1 1 9.6V2.4z" fill="rgba(235,235,245,0.6)"></path></svg>
+                  <div style="font-size:12.5px;color:rgba(235,235,245,0.7)">Показать в Finder</div>
+                </div>
+              </div>
+            </div>
+            <!-- pipeline ok -->
+            <div style="display:flex;align-items:center;gap:0;padding:11px 24px;border-top:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.03)">
+              <div style="display:flex;align-items:center;gap:7px;flex:none">
+                <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column"><div style="font-size:10.5px;font-weight:600">Записано</div><div style="font-size:9.5px;color:rgba(235,235,245,0.4)">14:42</div></div>
+              </div>
+              <div style="flex:1;height:1.5px;background:rgba(48,209,88,0.4);margin:0 10px"></div>
+              <div style="display:flex;align-items:center;gap:7px;flex:none">
+                <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column"><div style="font-size:10.5px;font-weight:600">Расшифровано</div><div style="font-size:9.5px;color:rgba(235,235,245,0.4)">14:47 · 4 мин 50 с</div></div>
+              </div>
+              <div style="flex:1;height:1.5px;background:rgba(48,209,88,0.4);margin:0 10px"></div>
+              <div style="display:flex;align-items:center;gap:7px;flex:none">
+                <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column"><div style="font-size:10.5px;font-weight:600">Саммари</div><div style="font-size:9.5px;color:rgba(235,235,245,0.4)">14:48 · Claude</div></div>
+              </div>
+              <div style="flex:1;height:1.5px;background:rgba(48,209,88,0.4);margin:0 10px"></div>
+              <div style="display:flex;align-items:center;gap:7px;flex:none">
+                <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column"><div style="font-size:10.5px;font-weight:600">Доставлено</div><div style="font-size:9.5px;color:rgba(235,235,245,0.4)">14:49 · Telegram, Obsidian</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD LIGHT: TRANSCRIPT TAB + ERROR PIPELINE -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Светлая · таб «Транскрипт» · ошибка доставки</div>
+        <div style="width:776px;border-radius:16px;background:#dfe4f0;background-image:radial-gradient(520px 340px at 20% 10%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(440px 300px at 85% 95%,rgba(120,160,255,0.45),transparent 60%);padding:28px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+          <div data-screen-label="Meeting card light transcript" style="border-radius:12px;background:rgba(250,250,253,0.88);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);box-shadow:0 24px 60px rgba(0,0,0,0.3);color:#1d1d1f;overflow:hidden">
+            <div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(0,0,0,0.06)">
+              <div style="display:flex;gap:7px;width:70px;flex:none"><div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div></div>
+              <div style="flex:1;text-align:center;font-size:12px;font-weight:600;color:rgba(60,60,67,0.6)">Планирование спринта</div>
+              <div style="width:70px;flex:none"></div>
+            </div>
+            <div style="padding:18px 24px 0;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;align-items:flex-start;gap:12px">
+                <div style="display:flex;flex-direction:column;gap:3px;flex:1">
+                  <div style="font-size:18px;font-weight:700;letter-spacing:-0.01em">Планирование спринта</div>
+                  <div style="font-size:12px;color:rgba(60,60,67,0.55)">Вчера, 10:00 · 51 мин · Настя, Дима, Игорь, Лена</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;background:rgba(52,199,89,0.12);border:1px solid rgba(52,199,89,0.3);border-radius:7px;padding:5px 10px;flex:none">
+                  <svg width="9" height="11" viewBox="0 0 10 12"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#248A3D"></path></svg>
+                  <div style="font-size:11px;font-weight:600;color:#248A3D">Локально · Whisper large-v3</div>
+                </div>
+              </div>
+              <div style="display:flex;background:rgba(0,0,0,0.06);border-radius:8px;padding:2px;align-self:flex-start">
+                <div style="font-size:12px;font-weight:500;padding:5px 16px;border-radius:6px;color:rgba(60,60,67,0.65);cursor:pointer" style-hover="color:#1d1d1f">Фоллоу-ап</div>
+                <div style="font-size:12px;font-weight:600;padding:5px 16px;border-radius:6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.12);cursor:pointer">Транскрипт</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px;padding-bottom:4px">
+                <div style="display:flex;gap:12px">
+                  <div style="font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:11px;font-variant-numeric:tabular-nums;color:rgba(60,60,67,0.45);flex:none;padding-top:1px;cursor:pointer" style-hover="color:#007AFF">00:12:34</div>
+                  <div style="font-size:13px;line-height:1.5;flex:1"><span style="font-weight:600;color:#0B63CE">Дима:</span> Звук вкладки уходит в рассинхрон после двадцатой минуты — буфер CoreAudio переполняется, надо чинить до беты.</div>
+                </div>
+                <div style="display:flex;gap:12px">
+                  <div style="font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:11px;font-variant-numeric:tabular-nums;color:rgba(60,60,67,0.45);flex:none;padding-top:1px;cursor:pointer" style-hover="color:#007AFF">00:13:02</div>
+                  <div style="font-size:13px;line-height:1.5;flex:1"><span style="font-weight:600;color:#7A3FB8">Настя:</span> Это блокер для длинных звонков. Ставлю в спринт с верхним приоритетом.</div>
+                </div>
+                <div style="display:flex;gap:12px">
+                  <div style="font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:11px;font-variant-numeric:tabular-nums;color:rgba(60,60,67,0.45);flex:none;padding-top:1px;cursor:pointer" style-hover="color:#007AFF">00:13:41</div>
+                  <div style="font-size:13px;line-height:1.5;flex:1"><span style="font-weight:600;color:#B04A17">Игорь:</span> Тогда анонс двигаем? Или успеем до 28-го?</div>
+                </div>
+                <div style="display:flex;gap:12px">
+                  <div style="font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:11px;font-variant-numeric:tabular-nums;color:rgba(60,60,67,0.45);flex:none;padding-top:1px;cursor:pointer" style-hover="color:#007AFF">00:14:05</div>
+                  <div style="font-size:13px;line-height:1.5;flex:1"><span style="font-weight:600;color:#0B63CE">Дима:</span> Успеем, фикс на два дня. Хуже с ретраями отправки — их пока нет вообще.</div>
+                </div>
+                <div style="display:flex;gap:12px">
+                  <div style="font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:11px;font-variant-numeric:tabular-nums;color:rgba(60,60,67,0.45);flex:none;padding-top:1px;cursor:pointer" style-hover="color:#007AFF">00:14:38</div>
+                  <div style="font-size:13px;line-height:1.5;flex:1"><span style="font-weight:600;color:#137A3E">Лена:</span> Кстати, у меня вчера фоллоу-ап так и не дошёл в Telegram — видимо, как раз оно.</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:12px 0 14px;border-top:1px solid rgba(0,0,0,0.06)">
+                <div style="display:flex;align-items:center;gap:7px;height:30px;border-radius:8px;background:#007AFF;padding:0 13px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:#0066d6">
+                  <svg width="12" height="12" viewBox="0 0 14 14"><path d="M7 0.8l5.6 3.2v6L7 13.2 1.4 10v-6L7 0.8zm0 2L3.2 5v4L7 11.2 10.8 9V5L7 2.8z" fill="#fff"></path></svg>
+                  <div style="font-size:12.5px;font-weight:600;color:#fff">Открыть в Obsidian</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px;height:30px;border-radius:8px;background:rgba(0,0,0,0.06);padding:0 13px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:rgba(0,0,0,0.1)">
+                  <svg width="12" height="12" viewBox="0 0 14 14"><path d="M13.2 0.8L0.9 5.8c-0.6 0.25-0.55 1.05 0.05 1.25l3.05 1 1.15 3.55c0.2 0.6 0.95 0.7 1.3 0.2l1.7-2.4 3.1 2.3c0.5 0.35 1.2 0.1 1.3-0.5l1.7-9.4c0.1-0.65-0.5-1.15-1.05-0.9zM4.6 8.2l6.4-4.9-4.9 5.7-0.1 2-1.4-2.8z" fill="#1d1d1f"></path></svg>
+                  <div style="font-size:12.5px;font-weight:600;color:#1d1d1f">Переслать</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px;height:30px;border-radius:8px;background:rgba(0,0,0,0.06);padding:0 13px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:rgba(0,0,0,0.1)">
+                  <svg width="12" height="12" viewBox="0 0 14 14"><path d="M12.1 5.2A5.5 5.5 0 0 0 2 4.4L1 2.6v4h4L3.3 5.2a4.1 4.1 0 0 1 7.5 0.6l1.3-0.6zM1.9 8.8a5.5 5.5 0 0 0 10.1 0.8l1 1.8v-4H9l1.7 1.4a4.1 4.1 0 0 1-7.5-0.6l-1.3 0.6z" fill="#1d1d1f"></path></svg>
+                  <div style="font-size:12.5px;font-weight:600;color:#1d1d1f">Пересобрать саммари</div>
+                  <svg width="8" height="5" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="rgba(60,60,67,0.6)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <div style="flex:1"></div>
+                <div style="display:flex;align-items:center;gap:7px;height:30px;border-radius:8px;padding:0 10px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:rgba(0,0,0,0.05)">
+                  <svg width="13" height="11" viewBox="0 0 14 12"><path d="M1 2.4A1.4 1.4 0 0 1 2.4 1h3l1.2 1.6h5A1.4 1.4 0 0 1 13 4v5.6A1.4 1.4 0 0 1 11.6 11H2.4A1.4 1.4 0 0 1 1 9.6V2.4z" fill="rgba(60,60,67,0.5)"></path></svg>
+                  <div style="font-size:12.5px;color:rgba(60,60,67,0.7)">Показать в Finder</div>
+                </div>
+              </div>
+            </div>
+            <!-- pipeline error -->
+            <div style="display:flex;align-items:center;gap:0;padding:11px 24px;border-top:1px solid rgba(0,0,0,0.06);background:rgba(0,0,0,0.025)">
+              <div style="display:flex;align-items:center;gap:7px;flex:none">
+                <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.4" fill="#34C759"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column"><div style="font-size:10.5px;font-weight:600">Записано</div><div style="font-size:9.5px;color:rgba(60,60,67,0.45)">10:51</div></div>
+              </div>
+              <div style="flex:1;height:1.5px;background:rgba(52,199,89,0.5);margin:0 10px"></div>
+              <div style="display:flex;align-items:center;gap:7px;flex:none">
+                <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.4" fill="#34C759"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column"><div style="font-size:10.5px;font-weight:600">Расшифровано</div><div style="font-size:9.5px;color:rgba(60,60,67,0.45)">10:57 · 5 мин 40 с</div></div>
+              </div>
+              <div style="flex:1;height:1.5px;background:rgba(52,199,89,0.5);margin:0 10px"></div>
+              <div style="display:flex;align-items:center;gap:7px;flex:none">
+                <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.4" fill="#34C759"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column"><div style="font-size:10.5px;font-weight:600">Саммари</div><div style="font-size:9.5px;color:rgba(60,60,67,0.45)">10:58 · локально</div></div>
+              </div>
+              <div style="flex:1;height:1.5px;background:rgba(255,149,0,0.5);margin:0 10px"></div>
+              <div style="display:flex;align-items:center;gap:7px;flex:none">
+                <svg width="13" height="13" viewBox="0 0 14 14"><path d="M7 0.8 L13.5 12.4 H0.5 Z" fill="#FF9500"></path><rect x="6.35" y="4.6" width="1.3" height="4" rx="0.65" fill="#fff"></rect><circle cx="7" cy="10.3" r="0.8" fill="#fff"></circle></svg>
+                <div style="display:flex;flex-direction:column"><div style="font-size:10.5px;font-weight:600;color:#C93400">Доставка · Telegram: timeout</div><div style="font-size:9.5px;color:rgba(60,60,67,0.45)">Obsidian ✓ · Telegram ✕</div></div>
+                <div style="display:flex;align-items:center;gap:5px;height:22px;border-radius:6px;background:rgba(255,149,0,0.14);padding:0 9px;cursor:pointer;margin-left:6px" style-hover="background:rgba(255,149,0,0.22)">
+                  <svg width="9" height="9" viewBox="0 0 14 14"><path d="M12.1 5.2A5.5 5.5 0 0 0 2 4.4L1 2.6v4h4L3.3 5.2a4.1 4.1 0 0 1 7.5 0.6l1.3-0.6zM1.9 8.8a5.5 5.5 0 0 0 10.1 0.8l1 1.8v-4H9l1.7 1.4a4.1 4.1 0 0 1-7.5-0.6l-1.3 0.6z" fill="#C93400"></path></svg>
+                  <div style="font-size:10.5px;font-weight:600;color:#C93400">Повторить</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- regen menu zoom + notes -->
+      <div style="display:flex;flex-direction:column;gap:20px;width:340px;flex:none">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">«Пересобрать саммари» — меню</div>
+          <div style="width:340px;border-radius:14px;background:#0e0e16;background-image:radial-gradient(300px 200px at 25% 15%,rgba(94,92,230,0.4),transparent 65%);padding:14px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+            <div data-screen-label="Regen menu" style="width:250px;border-radius:10px;background:rgba(40,40,44,0.92);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 16px 40px rgba(0,0,0,0.5);padding:5px;display:flex;flex-direction:column;gap:1px;color:#f2f2f7">
+              <div style="display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="13" height="13" viewBox="0 0 14 14" style="flex:none"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" fill="none" stroke="rgba(235,235,245,0.7)" stroke-width="1.4"></rect><rect x="4.5" y="4.5" width="5" height="5" rx="1" fill="rgba(235,235,245,0.7)"></rect></svg>
+                <div style="display:flex;flex-direction:column;flex:1"><div style="font-size:12.5px">Локальная модель</div><div style="font-size:10.5px;color:rgba(235,235,245,0.45)">на устройстве · ~20 с</div></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="13" height="13" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.5l1.5 4.2L13 6.2l-4.5 1.5L7 12l-1.5-4.3L1 6.2l4.5-1.5L7 0.5z" fill="#D97757"></path></svg>
+                <div style="display:flex;flex-direction:column;flex:1"><div style="font-size:12.5px">Claude-бустер</div><div style="font-size:10.5px;color:rgba(235,235,245,0.45)">в облако уйдёт текст саммари</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Микро-анимации</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Табы: crossfade + слайд 8 px, 200 ms; активный сегмент едет spring 250 ms. Секции фоллоу-апа появляются каскадом 40 ms.</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Клик по таймкоду копирует его: строка вспыхивает подсветкой 300 ms + тултип «Скопировано» на 1.2 s.</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">«Пересобрать»: меню scale 0.97→1 + fade 160 ms; во время регена кнопка морфится в спиннер, готовые секции перезаливаются каскадом.</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Пайплайн: шаги загораются слева направо 150 ms; активный шаг пульсирует. Retry — иконка делает оборот 360°, шаг возвращается в спиннер.</div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="1a" data-screen-label="MeetMind UI spec" style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;padding:56px 64px 96px;color:#e8e8ee;display:flex;flex-direction:column;gap:64px;min-width:2450px">
+
+  <!-- ============ HEADER ============ -->
+  <div style="display:flex;flex-direction:column;gap:10px;max-width:820px">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(160deg,#2c2c34,#17171d);border:1px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;flex:none">
+        <svg width="22" height="22" viewBox="0 0 18 18"><g fill="#FF453A"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <div style="font-size:22px;font-weight:700;letter-spacing:-0.02em">MeetMind — UI-спецификация</div>
+        <div style="font-size:13px;color:#9a9aa6">macOS menubar-утилита · запись встреч · Whisper на устройстве · ничего не уходит в облако</div>
+      </div>
+      <div style="margin-left:16px;font-size:11px;font-weight:700;color:#8f8f9c;border:1px solid rgba(255,255,255,0.18);border-radius:6px;padding:3px 8px">1a</div>
+    </div>
+  </div>
+
+  <!-- ============ GROUP 1 · MENUBAR ICON ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="1 Menubar icon states">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">01</div>
+      <div style="font-size:16px;font-weight:700">Иконка в menubar — 4 состояния</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- dark strip -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Тёмная тема</div>
+        <div style="display:flex;gap:16px">
+
+          <!-- idle dark -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:236px;border-radius:10px;overflow:hidden;background:#0e0e16;background-image:radial-gradient(300px 160px at 25% 20%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(240px 140px at 80% 95%,rgba(10,132,255,0.3),transparent 60%);box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+              <div style="height:30px;background:rgba(24,24,28,0.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;border-bottom:1px solid rgba(255,255,255,0.06)">
+                <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(235,235,245,0.85)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                <svg width="15" height="12" viewBox="0 0 16 12"><path d="M8 9.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM4.5 7.3a5 5 0 0 1 7 0l-1.4 1.5a3 3 0 0 0-4.2 0L4.5 7.3zM1.6 4.4a9 9 0 0 1 12.8 0l-1.4 1.4a7 7 0 0 0-10 0L1.6 4.4z" fill="rgba(235,235,245,0.85)"></path></svg>
+                <div style="font-size:11.5px;color:rgba(235,235,245,0.85)">14:32</div>
+              </div>
+              <div style="height:38px"></div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Idle</div>
+            <div style="font-size:11px;color:#7c7c88;margin-top:-6px">монохром, template-иконка</div>
+          </div>
+
+          <!-- recording dark -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:236px;border-radius:10px;overflow:hidden;background:#0e0e16;background-image:radial-gradient(300px 160px at 25% 20%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(240px 140px at 80% 95%,rgba(10,132,255,0.3),transparent 60%);box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+              <div style="height:30px;background:rgba(24,24,28,0.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;border-bottom:1px solid rgba(255,255,255,0.06)">
+                <div style="display:flex;align-items:center;gap:6px;background:rgba(255,69,58,0.16);border-radius:6px;padding:2px 7px">
+                  <div style="width:8px;height:8px;border-radius:50%;background:#FF453A;animation:mmPulse 1.2s ease-in-out infinite"></div>
+                  <div style="font-size:11.5px;font-weight:600;color:#FF453A;font-variant-numeric:tabular-nums">24:13</div>
+                </div>
+                <svg width="15" height="12" viewBox="0 0 16 12"><path d="M8 9.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM4.5 7.3a5 5 0 0 1 7 0l-1.4 1.5a3 3 0 0 0-4.2 0L4.5 7.3zM1.6 4.4a9 9 0 0 1 12.8 0l-1.4 1.4a7 7 0 0 0-10 0L1.6 4.4z" fill="rgba(235,235,245,0.85)"></path></svg>
+                <div style="font-size:11.5px;color:rgba(235,235,245,0.85)">14:32</div>
+              </div>
+              <div style="height:38px"></div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Recording</div>
+            <div style="font-size:11px;color:#7c7c88;margin-top:-6px">красная плашка — честная и заметная</div>
+          </div>
+
+          <!-- processing dark -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:236px;border-radius:10px;overflow:hidden;background:#0e0e16;background-image:radial-gradient(300px 160px at 25% 20%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(240px 140px at 80% 95%,rgba(10,132,255,0.3),transparent 60%);box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+              <div style="height:30px;background:rgba(24,24,28,0.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;border-bottom:1px solid rgba(255,255,255,0.06)">
+                <div style="display:flex;align-items:center;gap:6px">
+                  <div style="width:13px;height:13px;flex:none;animation:mmSpin 1s linear infinite"><svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="rgba(235,235,245,0.25)" stroke-width="2"></circle><circle cx="7" cy="7" r="5.5" fill="none" stroke="rgba(235,235,245,0.9)" stroke-width="2" stroke-linecap="round" stroke-dasharray="10 25"></circle></svg></div>
+                  <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(235,235,245,0.45)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                </div>
+                <svg width="15" height="12" viewBox="0 0 16 12"><path d="M8 9.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM4.5 7.3a5 5 0 0 1 7 0l-1.4 1.5a3 3 0 0 0-4.2 0L4.5 7.3zM1.6 4.4a9 9 0 0 1 12.8 0l-1.4 1.4a7 7 0 0 0-10 0L1.6 4.4z" fill="rgba(235,235,245,0.85)"></path></svg>
+                <div style="font-size:11.5px;color:rgba(235,235,245,0.85)">14:32</div>
+              </div>
+              <div style="height:38px"></div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Processing</div>
+            <div style="font-size:11px;color:#7c7c88;margin-top:-6px">транскрипция + саммари, иконка приглушена</div>
+          </div>
+
+          <!-- error dark -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:236px;border-radius:10px;overflow:hidden;background:#0e0e16;background-image:radial-gradient(300px 160px at 25% 20%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(240px 140px at 80% 95%,rgba(10,132,255,0.3),transparent 60%);box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+              <div style="height:30px;background:rgba(24,24,28,0.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;border-bottom:1px solid rgba(255,255,255,0.06)">
+                <div style="position:relative;width:17px;height:17px">
+                  <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(235,235,245,0.5)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                  <svg width="10" height="10" viewBox="0 0 10 10" style="position:absolute;right:-4px;top:-3px"><path d="M5 0.5 L9.6 8.7 H0.4 Z" fill="#FF9F0A"></path><rect x="4.45" y="3.1" width="1.1" height="3" rx="0.55" fill="#1c1c20"></rect><circle cx="5" cy="7.2" r="0.65" fill="#1c1c20"></circle></svg>
+                </div>
+                <svg width="15" height="12" viewBox="0 0 16 12"><path d="M8 9.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM4.5 7.3a5 5 0 0 1 7 0l-1.4 1.5a3 3 0 0 0-4.2 0L4.5 7.3zM1.6 4.4a9 9 0 0 1 12.8 0l-1.4 1.4a7 7 0 0 0-10 0L1.6 4.4z" fill="rgba(235,235,245,0.85)"></path></svg>
+                <div style="font-size:11.5px;color:rgba(235,235,245,0.85)">14:32</div>
+              </div>
+              <div style="height:38px"></div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Error</div>
+            <div style="font-size:11px;color:#7c7c88;margin-top:-6px">бейдж-предупреждение, детали в меню</div>
+          </div>
+        </div>
+
+        <!-- light strip -->
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c;margin-top:10px">Светлая тема</div>
+        <div style="display:flex;gap:16px">
+
+          <!-- idle light -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:236px;border-radius:10px;overflow:hidden;background:#dfe4f0;background-image:radial-gradient(300px 160px at 25% 20%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(240px 140px at 80% 95%,rgba(120,160,255,0.45),transparent 60%);box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+              <div style="height:30px;background:rgba(250,250,253,0.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;border-bottom:1px solid rgba(0,0,0,0.06)">
+                <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(29,29,31,0.85)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                <svg width="15" height="12" viewBox="0 0 16 12"><path d="M8 9.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM4.5 7.3a5 5 0 0 1 7 0l-1.4 1.5a3 3 0 0 0-4.2 0L4.5 7.3zM1.6 4.4a9 9 0 0 1 12.8 0l-1.4 1.4a7 7 0 0 0-10 0L1.6 4.4z" fill="rgba(29,29,31,0.85)"></path></svg>
+                <div style="font-size:11.5px;color:rgba(29,29,31,0.85)">14:32</div>
+              </div>
+              <div style="height:38px"></div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Idle</div>
+          </div>
+
+          <!-- recording light -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:236px;border-radius:10px;overflow:hidden;background:#dfe4f0;background-image:radial-gradient(300px 160px at 25% 20%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(240px 140px at 80% 95%,rgba(120,160,255,0.45),transparent 60%);box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+              <div style="height:30px;background:rgba(250,250,253,0.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;border-bottom:1px solid rgba(0,0,0,0.06)">
+                <div style="display:flex;align-items:center;gap:6px;background:rgba(255,59,48,0.12);border-radius:6px;padding:2px 7px">
+                  <div style="width:8px;height:8px;border-radius:50%;background:#FF3B30;animation:mmPulse 1.2s ease-in-out infinite"></div>
+                  <div style="font-size:11.5px;font-weight:600;color:#D70015;font-variant-numeric:tabular-nums">24:13</div>
+                </div>
+                <svg width="15" height="12" viewBox="0 0 16 12"><path d="M8 9.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM4.5 7.3a5 5 0 0 1 7 0l-1.4 1.5a3 3 0 0 0-4.2 0L4.5 7.3zM1.6 4.4a9 9 0 0 1 12.8 0l-1.4 1.4a7 7 0 0 0-10 0L1.6 4.4z" fill="rgba(29,29,31,0.85)"></path></svg>
+                <div style="font-size:11.5px;color:rgba(29,29,31,0.85)">14:32</div>
+              </div>
+              <div style="height:38px"></div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Recording</div>
+          </div>
+
+          <!-- processing light -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:236px;border-radius:10px;overflow:hidden;background:#dfe4f0;background-image:radial-gradient(300px 160px at 25% 20%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(240px 140px at 80% 95%,rgba(120,160,255,0.45),transparent 60%);box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+              <div style="height:30px;background:rgba(250,250,253,0.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;border-bottom:1px solid rgba(0,0,0,0.06)">
+                <div style="display:flex;align-items:center;gap:6px">
+                  <div style="width:13px;height:13px;flex:none;animation:mmSpin 1s linear infinite"><svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="rgba(29,29,31,0.2)" stroke-width="2"></circle><circle cx="7" cy="7" r="5.5" fill="none" stroke="rgba(29,29,31,0.8)" stroke-width="2" stroke-linecap="round" stroke-dasharray="10 25"></circle></svg></div>
+                  <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(29,29,31,0.4)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                </div>
+                <svg width="15" height="12" viewBox="0 0 16 12"><path d="M8 9.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM4.5 7.3a5 5 0 0 1 7 0l-1.4 1.5a3 3 0 0 0-4.2 0L4.5 7.3zM1.6 4.4a9 9 0 0 1 12.8 0l-1.4 1.4a7 7 0 0 0-10 0L1.6 4.4z" fill="rgba(29,29,31,0.85)"></path></svg>
+                <div style="font-size:11.5px;color:rgba(29,29,31,0.85)">14:32</div>
+              </div>
+              <div style="height:38px"></div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Processing</div>
+          </div>
+
+          <!-- error light -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="width:236px;border-radius:10px;overflow:hidden;background:#dfe4f0;background-image:radial-gradient(300px 160px at 25% 20%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(240px 140px at 80% 95%,rgba(120,160,255,0.45),transparent 60%);box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+              <div style="height:30px;background:rgba(250,250,253,0.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;border-bottom:1px solid rgba(0,0,0,0.06)">
+                <div style="position:relative;width:17px;height:17px">
+                  <svg width="17" height="17" viewBox="0 0 18 18"><g fill="rgba(29,29,31,0.45)"><rect x="1.5" y="6.5" width="2.2" height="5" rx="1.1"></rect><rect x="5.4" y="3.5" width="2.2" height="11" rx="1.1"></rect><rect x="9.3" y="5.5" width="2.2" height="7" rx="1.1"></rect><rect x="13.2" y="2" width="2.2" height="14" rx="1.1"></rect></g></svg>
+                  <svg width="10" height="10" viewBox="0 0 10 10" style="position:absolute;right:-4px;top:-3px"><path d="M5 0.5 L9.6 8.7 H0.4 Z" fill="#FF9500"></path><rect x="4.45" y="3.1" width="1.1" height="3" rx="0.55" fill="#fff"></rect><circle cx="5" cy="7.2" r="0.65" fill="#fff"></circle></svg>
+                </div>
+                <svg width="15" height="12" viewBox="0 0 16 12"><path d="M8 9.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM4.5 7.3a5 5 0 0 1 7 0l-1.4 1.5a3 3 0 0 0-4.2 0L4.5 7.3zM1.6 4.4a9 9 0 0 1 12.8 0l-1.4 1.4a7 7 0 0 0-10 0L1.6 4.4z" fill="rgba(29,29,31,0.85)"></path></svg>
+                <div style="font-size:11.5px;color:rgba(29,29,31,0.85)">14:32</div>
+              </div>
+              <div style="height:38px"></div>
+            </div>
+            <div style="font-size:12px;color:#b9b9c4;font-weight:600">Error</div>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+        <div style="width:330px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;flex:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Микро-анимации</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Recording: точка пульсирует scale 1→1.3 + opacity 1→0.45, 1.2 s ease-in-out, бесконечно. Таймер тикает раз в секунду без анимации (tabular-nums — цифры не прыгают).</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Processing: кольцо вращается 1 s linear; дуга растёт по мере прогресса транскрипции.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Смена состояний — crossfade 200 ms. Error-бейдж появляется scale 0.5→1 spring и один раз мягко подпрыгивает.</div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ============ GROUP 2 · DROPDOWN ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="2 Dropdown menu">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">02</div>
+      <div style="font-size:16px;font-weight:700">Дропдаун из menubar — во время записи</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- ===== dropdown DARK ===== -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Тёмная</div>
+        <div style="width:392px;border-radius:14px;background:#0e0e16;background-image:radial-gradient(420px 300px at 20% 10%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(360px 260px at 85% 95%,rgba(10,132,255,0.3),transparent 60%);padding:26px;display:flex;justify-content:center;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+          <div data-screen-label="Dropdown dark" style="width:312px;border-radius:12px;background:rgba(28,28,32,0.78);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 22px 60px rgba(0,0,0,0.5);padding:6px;display:flex;flex-direction:column;gap:2px;color:#f2f2f7">
+
+            <!-- current meeting -->
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 10px 4px">
+              <div style="width:10px;height:10px;border-radius:50%;background:#FF453A;flex:none;animation:mmPulse 1.2s ease-in-out infinite;box-shadow:0 0 8px rgba(255,69,58,0.7)"></div>
+              <div style="display:flex;flex-direction:column;gap:1px;min-width:0;flex:1">
+                <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ meetingName }}</div>
+                <div style="font-size:11px;color:#FF6961;font-weight:500;font-variant-numeric:tabular-nums">Идёт запись · 24:13</div>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M7 1.2a5.8 5.8 0 0 1 5.8 5.8v2.6a3.2 3.2 0 0 1-3.2 3.2H8.2v-1.6h1.4a1.6 1.6 0 0 0 1.6-1.6V7A4.2 4.2 0 0 0 2.8 7v2.6a1.6 1.6 0 0 0 1.6 1.6h.3v1.6h-.3a3.2 3.2 0 0 1-3.2-3.2V7A5.8 5.8 0 0 1 7 1.2z" fill="rgba(235,235,245,0.35)"></path></svg>
+            </div>
+
+            <!-- levels -->
+            <div style="display:flex;flex-direction:column;gap:7px;padding:6px 10px 10px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <svg width="12" height="14" viewBox="0 0 12 14" style="flex:none"><path d="M6 0.8a2.4 2.4 0 0 1 2.4 2.4v3.6a2.4 2.4 0 1 1-4.8 0V3.2A2.4 2.4 0 0 1 6 0.8zm-4.5 6h1.2a3.3 3.3 0 0 0 6.6 0h1.2a4.5 4.5 0 0 1-3.9 4.4v1.6H8.4v1.2H3.6v-1.2h1.8v-1.6a4.5 4.5 0 0 1-3.9-4.4z" fill="rgba(235,235,245,0.6)"></path></svg>
+                <div style="font-size:11px;color:rgba(235,235,245,0.6);width:98px;flex:none">Микрофон</div>
+                <div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden"><div style="width:72%;height:100%;border-radius:3px;background:linear-gradient(90deg,#30D158 80%,#FFD60A)"></div></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <svg width="12" height="14" viewBox="0 0 14 12" style="flex:none"><path d="M7.6 0.6v10.8L4 8.2H1.4A1 1 0 0 1 0.4 7.2V4.8a1 1 0 0 1 1-1H4L7.6 0.6zM9.4 3.4a3.6 3.6 0 0 1 0 5.2L8.6 7.8a2.4 2.4 0 0 0 0-3.6l0.8-0.8zM11 1.8a5.8 5.8 0 0 1 0 8.4l-0.8-0.8a4.7 4.7 0 0 0 0-6.8L11 1.8z" fill="rgba(235,235,245,0.6)"></path></svg>
+                <div style="font-size:11px;color:rgba(235,235,245,0.6);width:98px;flex:none">Системный звук</div>
+                <div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden"><div style="width:44%;height:100%;border-radius:3px;background:#30D158"></div></div>
+              </div>
+            </div>
+
+            <!-- stop button -->
+            <div style="padding:0 6px 4px">
+              <div style="height:32px;border-radius:8px;background:#E5372D;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" style-hover="background:#D22F26" style-active="transform:scale(0.98)">
+                <div style="width:9px;height:9px;border-radius:2px;background:#fff"></div>
+                <div style="font-size:13px;font-weight:600;color:#fff">Остановить запись</div>
+                <div style="font-size:11px;color:rgba(255,255,255,0.75);background:rgba(255,255,255,0.16);border-radius:4px;padding:1px 5px">⌘⇧R</div>
+              </div>
+            </div>
+
+            <div style="height:1px;background:rgba(255,255,255,0.09);margin:4px 10px"></div>
+
+            <!-- recent -->
+            <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.45);padding:2px 10px">Последние встречи</div>
+            <div style="display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><circle cx="7" cy="7" r="6.4" fill="#30D158"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#1c1c20" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column;gap:0;min-width:0;flex:1">
+                  <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Синк по бете</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.45)">Отправлено в Telegram · 12:00</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <div style="width:14px;height:14px;flex:none;animation:mmSpin 1s linear infinite"><svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.6" fill="none" stroke="rgba(235,235,245,0.2)" stroke-width="2"></circle><circle cx="7" cy="7" r="5.6" fill="none" stroke="#0A84FF" stroke-width="2" stroke-linecap="round" stroke-dasharray="12 24"></circle></svg></div>
+                <div style="display:flex;flex-direction:column;gap:0;min-width:0;flex:1">
+                  <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">1:1 с Настей</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.45)">Транскрипция · 64%</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.8 L13.5 12.4 H0.5 Z" fill="#FF9F0A"></path><rect x="6.35" y="4.6" width="1.3" height="4" rx="0.65" fill="#1c1c20"></rect><circle cx="7" cy="10.3" r="0.8" fill="#1c1c20"></circle></svg>
+                <div style="display:flex;flex-direction:column;gap:0;min-width:0;flex:1">
+                  <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Планирование спринта</div>
+                  <div style="font-size:11px;color:#FF9F0A">Ошибка отправки — нажмите, чтобы повторить</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;cursor:pointer" style-hover="background:rgba(255,255,255,0.08)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M2 2.6h10v1.5H2V2.6zm0 3.7h10v1.5H2V6.3zm0 3.7h6.5v1.5H2V10z" fill="rgba(235,235,245,0.55)"></path></svg>
+                <div style="font-size:13px;flex:1">Все встречи…</div>
+                <div style="min-width:17px;height:16px;border-radius:8px;background:rgba(255,159,10,0.18);display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;color:#FF9F0A;padding:0 5px">2</div>
+                <svg width="6" height="10" viewBox="0 0 6 10" style="flex:none"><path d="M1 1l4 4-4 4" stroke="rgba(235,235,245,0.35)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+            </div>
+
+            <div style="height:1px;background:rgba(255,255,255,0.09);margin:4px 10px"></div>
+
+            <!-- claude booster -->
+            <div style="display:flex;align-items:center;gap:9px;padding:7px 10px">
+              <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.5l1.5 4.2L13 6.2l-4.5 1.5L7 12l-1.5-4.3L1 6.2l4.5-1.5L7 0.5z" fill="#D97757"></path></svg>
+              <div style="display:flex;flex-direction:column;gap:0;flex:1">
+                <div style="font-size:13px">Claude-бустер</div>
+                <div style="font-size:11px;color:rgba(235,235,245,0.45)">Улучшает саммари в облаке · opt-in</div>
+              </div>
+              <sc-if value="{{ boosterOn }}" hint-placeholder-val="{{ true }}">
+                <div style="width:36px;height:21px;border-radius:11px;background:#30D158;position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:2px;left:17px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.35)"></div></div>
+              </sc-if>
+              <sc-if value="{{ boosterOff }}" hint-placeholder-val="{{ false }}">
+                <div style="width:36px;height:21px;border-radius:11px;background:rgba(255,255,255,0.2);position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.35)"></div></div>
+              </sc-if>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;padding:0 10px 6px">
+              <svg width="9" height="11" viewBox="0 0 10 12" style="flex:none"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#30D158"></path></svg>
+              <div style="font-size:10.5px;color:rgba(235,235,245,0.45);line-height:1.4">Без бустера аудио и текст не покидают этот Mac</div>
+            </div>
+
+            <div style="height:1px;background:rgba(255,255,255,0.09);margin:2px 10px 4px"></div>
+
+            <!-- footer -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 10px 7px">
+              <div style="font-size:13px;color:rgba(235,235,245,0.85);cursor:pointer" style-hover="color:#fff">Настройки…</div>
+              <div style="font-size:13px;color:rgba(235,235,245,0.5);cursor:pointer" style-hover="color:rgba(235,235,245,0.85)">Выйти</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== dropdown LIGHT ===== -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Светлая</div>
+        <div style="width:392px;border-radius:14px;background:#dfe4f0;background-image:radial-gradient(420px 300px at 20% 10%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(360px 260px at 85% 95%,rgba(120,160,255,0.45),transparent 60%);padding:26px;display:flex;justify-content:center;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+          <div data-screen-label="Dropdown light" style="width:312px;border-radius:12px;background:rgba(248,248,251,0.8);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);box-shadow:0 22px 60px rgba(0,0,0,0.28);padding:6px;display:flex;flex-direction:column;gap:2px;color:#1d1d1f">
+
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 10px 4px">
+              <div style="width:10px;height:10px;border-radius:50%;background:#FF3B30;flex:none;animation:mmPulse 1.2s ease-in-out infinite;box-shadow:0 0 8px rgba(255,59,48,0.55)"></div>
+              <div style="display:flex;flex-direction:column;gap:1px;min-width:0;flex:1">
+                <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ meetingName }}</div>
+                <div style="font-size:11px;color:#D70015;font-weight:500;font-variant-numeric:tabular-nums">Идёт запись · 24:13</div>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M7 1.2a5.8 5.8 0 0 1 5.8 5.8v2.6a3.2 3.2 0 0 1-3.2 3.2H8.2v-1.6h1.4a1.6 1.6 0 0 0 1.6-1.6V7A4.2 4.2 0 0 0 2.8 7v2.6a1.6 1.6 0 0 0 1.6 1.6h.3v1.6h-.3a3.2 3.2 0 0 1-3.2-3.2V7A5.8 5.8 0 0 1 7 1.2z" fill="rgba(60,60,67,0.3)"></path></svg>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:7px;padding:6px 10px 10px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <svg width="12" height="14" viewBox="0 0 12 14" style="flex:none"><path d="M6 0.8a2.4 2.4 0 0 1 2.4 2.4v3.6a2.4 2.4 0 1 1-4.8 0V3.2A2.4 2.4 0 0 1 6 0.8zm-4.5 6h1.2a3.3 3.3 0 0 0 6.6 0h1.2a4.5 4.5 0 0 1-3.9 4.4v1.6H8.4v1.2H3.6v-1.2h1.8v-1.6a4.5 4.5 0 0 1-3.9-4.4z" fill="rgba(60,60,67,0.6)"></path></svg>
+                <div style="font-size:11px;color:rgba(60,60,67,0.6);width:98px;flex:none">Микрофон</div>
+                <div style="flex:1;height:5px;border-radius:3px;background:rgba(0,0,0,0.1);overflow:hidden"><div style="width:72%;height:100%;border-radius:3px;background:linear-gradient(90deg,#34C759 80%,#FFCC00)"></div></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <svg width="12" height="14" viewBox="0 0 14 12" style="flex:none"><path d="M7.6 0.6v10.8L4 8.2H1.4A1 1 0 0 1 0.4 7.2V4.8a1 1 0 0 1 1-1H4L7.6 0.6zM9.4 3.4a3.6 3.6 0 0 1 0 5.2L8.6 7.8a2.4 2.4 0 0 0 0-3.6l0.8-0.8zM11 1.8a5.8 5.8 0 0 1 0 8.4l-0.8-0.8a4.7 4.7 0 0 0 0-6.8L11 1.8z" fill="rgba(60,60,67,0.6)"></path></svg>
+                <div style="font-size:11px;color:rgba(60,60,67,0.6);width:98px;flex:none">Системный звук</div>
+                <div style="flex:1;height:5px;border-radius:3px;background:rgba(0,0,0,0.1);overflow:hidden"><div style="width:44%;height:100%;border-radius:3px;background:#34C759"></div></div>
+              </div>
+            </div>
+
+            <div style="padding:0 6px 4px">
+              <div style="height:32px;border-radius:8px;background:#E5372D;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" style-hover="background:#D22F26" style-active="transform:scale(0.98)">
+                <div style="width:9px;height:9px;border-radius:2px;background:#fff"></div>
+                <div style="font-size:13px;font-weight:600;color:#fff">Остановить запись</div>
+                <div style="font-size:11px;color:rgba(255,255,255,0.75);background:rgba(255,255,255,0.16);border-radius:4px;padding:1px 5px">⌘⇧R</div>
+              </div>
+            </div>
+
+            <div style="height:1px;background:rgba(0,0,0,0.08);margin:4px 10px"></div>
+
+            <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.5);padding:2px 10px">Последние встречи</div>
+            <div style="display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;cursor:pointer" style-hover="background:rgba(0,0,0,0.05)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><circle cx="7" cy="7" r="6.4" fill="#34C759"></circle><path d="M4 7.2l2 2 4-4.2" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="display:flex;flex-direction:column;gap:0;min-width:0;flex:1">
+                  <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Синк по бете</div>
+                  <div style="font-size:11px;color:rgba(60,60,67,0.5)">Отправлено в Telegram · 12:00</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;cursor:pointer" style-hover="background:rgba(0,0,0,0.05)">
+                <div style="width:14px;height:14px;flex:none;animation:mmSpin 1s linear infinite"><svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.6" fill="none" stroke="rgba(60,60,67,0.18)" stroke-width="2"></circle><circle cx="7" cy="7" r="5.6" fill="none" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-dasharray="12 24"></circle></svg></div>
+                <div style="display:flex;flex-direction:column;gap:0;min-width:0;flex:1">
+                  <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">1:1 с Настей</div>
+                  <div style="font-size:11px;color:rgba(60,60,67,0.5)">Транскрипция · 64%</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;cursor:pointer" style-hover="background:rgba(0,0,0,0.05)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.8 L13.5 12.4 H0.5 Z" fill="#FF9500"></path><rect x="6.35" y="4.6" width="1.3" height="4" rx="0.65" fill="#fff"></rect><circle cx="7" cy="10.3" r="0.8" fill="#fff"></circle></svg>
+                <div style="display:flex;flex-direction:column;gap:0;min-width:0;flex:1">
+                  <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Планирование спринта</div>
+                  <div style="font-size:11px;color:#C93400">Ошибка отправки — нажмите, чтобы повторить</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;cursor:pointer" style-hover="background:rgba(0,0,0,0.05)">
+                <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M2 2.6h10v1.5H2V2.6zm0 3.7h10v1.5H2V6.3zm0 3.7h6.5v1.5H2V10z" fill="rgba(60,60,67,0.55)"></path></svg>
+                <div style="font-size:13px;flex:1">Все встречи…</div>
+                <div style="min-width:17px;height:16px;border-radius:8px;background:rgba(255,149,0,0.16);display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;color:#C93400;padding:0 5px">2</div>
+                <svg width="6" height="10" viewBox="0 0 6 10" style="flex:none"><path d="M1 1l4 4-4 4" stroke="rgba(60,60,67,0.35)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+            </div>
+
+            <div style="height:1px;background:rgba(0,0,0,0.08);margin:4px 10px"></div>
+
+            <div style="display:flex;align-items:center;gap:9px;padding:7px 10px">
+              <svg width="14" height="14" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.5l1.5 4.2L13 6.2l-4.5 1.5L7 12l-1.5-4.3L1 6.2l4.5-1.5L7 0.5z" fill="#D97757"></path></svg>
+              <div style="display:flex;flex-direction:column;gap:0;flex:1">
+                <div style="font-size:13px">Claude-бустер</div>
+                <div style="font-size:11px;color:rgba(60,60,67,0.5)">Улучшает саммари в облаке · opt-in</div>
+              </div>
+              <sc-if value="{{ boosterOn }}" hint-placeholder-val="{{ true }}">
+                <div style="width:36px;height:21px;border-radius:11px;background:#34C759;position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:2px;left:17px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div></div>
+              </sc-if>
+              <sc-if value="{{ boosterOff }}" hint-placeholder-val="{{ false }}">
+                <div style="width:36px;height:21px;border-radius:11px;background:rgba(0,0,0,0.16);position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div></div>
+              </sc-if>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;padding:0 10px 6px">
+              <svg width="9" height="11" viewBox="0 0 10 12" style="flex:none"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#248A3D"></path></svg>
+              <div style="font-size:10.5px;color:rgba(60,60,67,0.5);line-height:1.4">Без бустера аудио и текст не покидают этот Mac</div>
+            </div>
+
+            <div style="height:1px;background:rgba(0,0,0,0.08);margin:2px 10px 4px"></div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 10px 7px">
+              <div style="font-size:13px;color:#1d1d1f;cursor:pointer">Настройки…</div>
+              <div style="font-size:13px;color:rgba(60,60,67,0.5);cursor:pointer">Выйти</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- idle excerpt + notes -->
+      <div style="display:flex;flex-direction:column;gap:20px;width:340px;flex:none">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Idle — верх меню</div>
+          <div style="width:340px;border-radius:14px;background:#0e0e16;background-image:radial-gradient(300px 200px at 25% 15%,rgba(94,92,230,0.4),transparent 65%);padding:14px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+            <div style="width:312px;border-radius:12px;background:rgba(28,28,32,0.78);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 16px 40px rgba(0,0,0,0.5);padding:6px;display:flex;flex-direction:column;gap:2px;color:#f2f2f7">
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 10px 6px">
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1">
+                  <div style="font-size:13px;font-weight:600">Запись не идёт</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.45)">Микрофон + системный звук</div>
+                </div>
+                <svg width="9" height="11" viewBox="0 0 10 12"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#30D158"></path></svg>
+              </div>
+              <div style="padding:0 6px 6px">
+                <div style="height:32px;border-radius:8px;background:#E5372D;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer" style-hover="background:#D22F26">
+                  <div style="width:9px;height:9px;border-radius:50%;background:#fff"></div>
+                  <div style="font-size:13px;font-weight:600;color:#fff">Начать запись</div>
+                  <div style="font-size:11px;color:rgba(255,255,255,0.75);background:rgba(255,255,255,0.16);border-radius:4px;padding:1px 5px">⌘⇧R</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Микро-анимации</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Меню открывается из иконки: scale 0.97→1 + fade, 160 ms spring. Уровни обновляются 30 fps, пики затухают 300 ms — живой звук видно сразу.</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Кнопка записи: hover затемнение, нажатие scale 0.98; иконка ● морфится в ■ за 150 ms при старте.</div>
+            <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Тоггл Claude — пружина 250 ms; при первом включении открывается лист-подтверждение, что именно уйдёт в облако.</div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ GROUP 3 · ONBOARDING ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="3 Onboarding">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">03</div>
+      <div style="font-size:16px;font-weight:700">Онбординг — 4 шага</div>
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+        <div style="font-size:12.5px;color:#8f8f9c;margin-left:8px">Переход шагов: слайд 24 px + fade 250 ms ease-out · чип «Разрешено» появляется scale 0.8→1 spring после гранта · точки прогресса — заливка 200 ms</div>
+      </sc-if>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4, 524px);gap:24px;align-items:start">
+
+      <!-- STEP 1 DARK -->
+      <div data-screen-label="Onboarding step 1 dark" style="border-radius:16px;background:#0e0e16;background-image:radial-gradient(420px 280px at 20% 10%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(360px 240px at 85% 95%,rgba(10,132,255,0.3),transparent 60%);padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+        <div style="border-radius:12px;background:rgba(30,30,34,0.82);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 20px 50px rgba(0,0,0,0.5);color:#f2f2f7;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:12px 14px 0">
+            <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+          </div>
+          <div style="padding:18px 28px 24px;display:flex;flex-direction:column;gap:16px">
+            <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.45)">Шаг 1 из 4 · Разрешения</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">Слышать — можно.<br>Подсматривать — нет.</div>
+              <div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.6)">MeetMind включается только по вашей кнопке и всё держит на этом Mac. Два системных разрешения — и готово.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px">
+                <div style="width:30px;height:30px;border-radius:8px;background:rgba(10,132,255,0.2);display:flex;align-items:center;justify-content:center;flex:none"><svg width="13" height="16" viewBox="0 0 12 14"><path d="M6 0.8a2.4 2.4 0 0 1 2.4 2.4v3.6a2.4 2.4 0 1 1-4.8 0V3.2A2.4 2.4 0 0 1 6 0.8zm-4.5 6h1.2a3.3 3.3 0 0 0 6.6 0h1.2a4.5 4.5 0 0 1-3.9 4.4v1.6H8.4v1.2H3.6v-1.2h1.8v-1.6a4.5 4.5 0 0 1-3.9-4.4z" fill="#64AFFF"></path></svg></div>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1">
+                  <div style="font-size:13px;font-weight:600">Микрофон</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.5)">Ваш голос на встрече</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:5px;background:rgba(48,209,88,0.16);border-radius:6px;padding:4px 9px">
+                  <svg width="10" height="10" viewBox="0 0 14 14"><path d="M2.5 7.4l3 3 6-6.4" stroke="#30D158" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <div style="font-size:11px;font-weight:600;color:#30D158">Разрешено</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px">
+                <div style="width:30px;height:30px;border-radius:8px;background:rgba(94,92,230,0.24);display:flex;align-items:center;justify-content:center;flex:none"><svg width="16" height="13" viewBox="0 0 16 13"><rect x="0.8" y="0.8" width="14.4" height="9.4" rx="1.6" fill="none" stroke="#9D9BFF" stroke-width="1.4"></rect><path d="M5.5 12.2h5" stroke="#9D9BFF" stroke-width="1.4" stroke-linecap="round"></path></svg></div>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1">
+                  <div style="font-size:13px;font-weight:600">Запись экрана и звука</div>
+                  <div style="font-size:11px;color:rgba(235,235,245,0.5)">Только аудио систем­ных приложений — картинку не пишем</div>
+                </div>
+                <div style="font-size:12px;font-weight:600;color:#fff;background:#0A84FF;border-radius:7px;padding:6px 12px;cursor:pointer" style-hover="background:#0974df">Разрешить</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div style="display:flex;gap:6px">
+                <div style="width:7px;height:7px;border-radius:50%;background:#0A84FF"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div>
+              </div>
+              <div style="font-size:13px;font-weight:600;color:#fff;background:rgba(255,255,255,0.14);border-radius:7px;padding:7px 16px;cursor:pointer" style-hover="background:rgba(255,255,255,0.2)">Далее</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 2 DARK -->
+      <div data-screen-label="Onboarding step 2 dark" style="border-radius:16px;background:#0e0e16;background-image:radial-gradient(420px 280px at 20% 10%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(360px 240px at 85% 95%,rgba(10,132,255,0.3),transparent 60%);padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+        <div style="border-radius:12px;background:rgba(30,30,34,0.82);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 20px 50px rgba(0,0,0,0.5);color:#f2f2f7;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:12px 14px 0">
+            <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+          </div>
+          <div style="padding:18px 28px 24px;display:flex;flex-direction:column;gap:16px">
+            <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.45)">Шаг 2 из 4 · Аудио</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">Что слушаем?</div>
+              <div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.6)">Два канала пишутся раздельно — Whisper лучше разберёт, кто что сказал.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.5)">Микрофон</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;cursor:pointer">
+                  <div style="font-size:13px">MacBook Pro Microphone</div>
+                  <svg width="9" height="14" viewBox="0 0 9 14"><path d="M1.5 5L4.5 2l3 3M1.5 9l3 3 3-3" stroke="rgba(235,235,245,0.5)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;padding:2px 2px 0">
+                  <div style="font-size:10.5px;color:rgba(235,235,245,0.45);flex:none">проверка</div>
+                  <div style="flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,0.12);overflow:hidden"><div style="width:58%;height:100%;border-radius:2px;background:#30D158"></div></div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.5)">Системный звук</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;cursor:pointer">
+                  <div style="font-size:13px">Весь звук Mac (ScreenCaptureKit)</div>
+                  <svg width="9" height="14" viewBox="0 0 9 14"><path d="M1.5 5L4.5 2l3 3M1.5 9l3 3 3-3" stroke="rgba(235,235,245,0.5)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <div style="font-size:10.5px;color:rgba(235,235,245,0.45);padding:2px 2px 0">Zoom, Meet, Slack Huddle — что угодно, без плагинов</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div style="display:flex;gap:6px">
+                <div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:#0A84FF"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:13px;color:rgba(235,235,245,0.55);cursor:pointer">Назад</div>
+                <div style="font-size:13px;font-weight:600;color:#fff;background:#0A84FF;border-radius:7px;padding:7px 16px;cursor:pointer" style-hover="background:#0974df">Далее</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3 DARK -->
+      <div data-screen-label="Onboarding step 3 dark" style="border-radius:16px;background:#0e0e16;background-image:radial-gradient(420px 280px at 20% 10%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(360px 240px at 85% 95%,rgba(10,132,255,0.3),transparent 60%);padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+        <div style="border-radius:12px;background:rgba(30,30,34,0.82);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 20px 50px rgba(0,0,0,0.5);color:#f2f2f7;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:12px 14px 0">
+            <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+          </div>
+          <div style="padding:18px 28px 24px;display:flex;flex-direction:column;gap:16px">
+            <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.45)">Шаг 3 из 4 · Telegram</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">Куда прислать фоллоу-ап?</div>
+              <div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.6)">Telegram получает только готовый текст — ни аудио, ни расшифровку целиком.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;align-items:center;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:18px 16px">
+              <div style="font-size:12px;color:rgba(235,235,245,0.6)">Отправьте код боту <span style="color:#64AFFF;font-weight:600">@meetmind_bot</span></div>
+              <div style="font-size:24px;font-weight:700;letter-spacing:0.14em;white-space:nowrap;font-variant-numeric:tabular-nums;background:rgba(255,255,255,0.08);border:1px dashed rgba(255,255,255,0.2);border-radius:8px;padding:8px 14px 8px 18px">MM-7F3K</div>
+              <div style="display:flex;align-items:center;gap:7px">
+                <div style="width:11px;height:11px;flex:none;animation:mmSpin 1s linear infinite"><svg width="11" height="11" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="rgba(235,235,245,0.2)" stroke-width="2.4"></circle><circle cx="7" cy="7" r="5.5" fill="none" stroke="#0A84FF" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 26"></circle></svg></div>
+                <div style="font-size:11.5px;color:rgba(235,235,245,0.5)">Ждём сообщение от бота…</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div style="display:flex;gap:6px">
+                <div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:#0A84FF"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:13px;color:rgba(235,235,245,0.55);cursor:pointer">Пропустить</div>
+                <div style="font-size:13px;font-weight:600;color:#fff;background:rgba(255,255,255,0.14);border-radius:7px;padding:7px 16px;cursor:pointer">Далее</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 4 DARK -->
+      <div data-screen-label="Onboarding step 4 dark" style="border-radius:16px;background:#0e0e16;background-image:radial-gradient(420px 280px at 20% 10%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(360px 240px at 85% 95%,rgba(10,132,255,0.3),transparent 60%);padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+        <div style="border-radius:12px;background:rgba(30,30,34,0.82);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 20px 50px rgba(0,0,0,0.5);color:#f2f2f7;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:12px 14px 0">
+            <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+          </div>
+          <div style="padding:18px 28px 24px;display:flex;flex-direction:column;gap:16px">
+            <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.45)">Шаг 4 из 4 · Claude (по желанию)</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">Саммари поумнее?</div>
+              <div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.6)">Claude-бустер шлифует формулировки и вылавливает решения. Это единственная функция, которая ходит в облако — и она выключена.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="16" height="16" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.5l1.5 4.2L13 6.2l-4.5 1.5L7 12l-1.5-4.3L1 6.2l4.5-1.5L7 0.5z" fill="#D97757"></path></svg>
+                <div style="font-size:13px;font-weight:600;flex:1">Claude-бустер</div>
+                <div style="width:36px;height:21px;border-radius:11px;background:rgba(255,255,255,0.2);position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.35)"></div></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;align-items:center;gap:7px"><svg width="10" height="10" viewBox="0 0 14 14"><path d="M2.5 7.4l3 3 6-6.4" stroke="#30D158" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg><div style="font-size:11.5px;color:rgba(235,235,245,0.6)">Уходит: только текст саммари</div></div>
+                <div style="display:flex;align-items:center;gap:7px"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="#FF6961" stroke-width="1.8" stroke-linecap="round"></path></svg><div style="font-size:11.5px;color:rgba(235,235,245,0.6)">Не уходит никогда: аудио и полная расшифровка</div></div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div style="display:flex;gap:6px">
+                <div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.2)"></div><div style="width:7px;height:7px;border-radius:50%;background:#0A84FF"></div>
+              </div>
+              <div style="font-size:13px;font-weight:600;color:#fff;background:#0A84FF;border-radius:7px;padding:7px 16px;cursor:pointer" style-hover="background:#0974df">Готово</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 1 LIGHT -->
+      <div data-screen-label="Onboarding step 1 light" style="border-radius:16px;background:#dfe4f0;background-image:radial-gradient(420px 280px at 20% 10%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(360px 240px at 85% 95%,rgba(120,160,255,0.45),transparent 60%);padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+        <div style="border-radius:12px;background:rgba(249,249,252,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);box-shadow:0 20px 50px rgba(0,0,0,0.25);color:#1d1d1f;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:12px 14px 0">
+            <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+          </div>
+          <div style="padding:18px 28px 24px;display:flex;flex-direction:column;gap:16px">
+            <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.5)">Шаг 1 из 4 · Разрешения</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">Слышать — можно.<br>Подсматривать — нет.</div>
+              <div style="font-size:13px;line-height:1.5;color:rgba(60,60,67,0.65)">MeetMind включается только по вашей кнопке и всё держит на этом Mac. Два системных разрешения — и готово.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:12px;background:rgba(0,0,0,0.035);border:1px solid rgba(0,0,0,0.06);border-radius:10px;padding:12px 14px">
+                <div style="width:30px;height:30px;border-radius:8px;background:rgba(0,122,255,0.12);display:flex;align-items:center;justify-content:center;flex:none"><svg width="13" height="16" viewBox="0 0 12 14"><path d="M6 0.8a2.4 2.4 0 0 1 2.4 2.4v3.6a2.4 2.4 0 1 1-4.8 0V3.2A2.4 2.4 0 0 1 6 0.8zm-4.5 6h1.2a3.3 3.3 0 0 0 6.6 0h1.2a4.5 4.5 0 0 1-3.9 4.4v1.6H8.4v1.2H3.6v-1.2h1.8v-1.6a4.5 4.5 0 0 1-3.9-4.4z" fill="#007AFF"></path></svg></div>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1">
+                  <div style="font-size:13px;font-weight:600">Микрофон</div>
+                  <div style="font-size:11px;color:rgba(60,60,67,0.55)">Ваш голос на встрече</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:5px;background:rgba(52,199,89,0.14);border-radius:6px;padding:4px 9px">
+                  <svg width="10" height="10" viewBox="0 0 14 14"><path d="M2.5 7.4l3 3 6-6.4" stroke="#248A3D" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <div style="font-size:11px;font-weight:600;color:#248A3D">Разрешено</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;background:rgba(0,0,0,0.035);border:1px solid rgba(0,0,0,0.06);border-radius:10px;padding:12px 14px">
+                <div style="width:30px;height:30px;border-radius:8px;background:rgba(94,92,230,0.14);display:flex;align-items:center;justify-content:center;flex:none"><svg width="16" height="13" viewBox="0 0 16 13"><rect x="0.8" y="0.8" width="14.4" height="9.4" rx="1.6" fill="none" stroke="#5E5CE6" stroke-width="1.4"></rect><path d="M5.5 12.2h5" stroke="#5E5CE6" stroke-width="1.4" stroke-linecap="round"></path></svg></div>
+                <div style="display:flex;flex-direction:column;gap:1px;flex:1">
+                  <div style="font-size:13px;font-weight:600">Запись экрана и звука</div>
+                  <div style="font-size:11px;color:rgba(60,60,67,0.55)">Только аудио — картинку не пишем</div>
+                </div>
+                <div style="font-size:12px;font-weight:600;color:#fff;background:#007AFF;border-radius:7px;padding:6px 12px;cursor:pointer" style-hover="background:#0066d6">Разрешить</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div style="display:flex;gap:6px">
+                <div style="width:7px;height:7px;border-radius:50%;background:#007AFF"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div>
+              </div>
+              <div style="font-size:13px;font-weight:600;color:#1d1d1f;background:rgba(0,0,0,0.07);border-radius:7px;padding:7px 16px;cursor:pointer" style-hover="background:rgba(0,0,0,0.11)">Далее</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 2 LIGHT -->
+      <div data-screen-label="Onboarding step 2 light" style="border-radius:16px;background:#dfe4f0;background-image:radial-gradient(420px 280px at 20% 10%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(360px 240px at 85% 95%,rgba(120,160,255,0.45),transparent 60%);padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+        <div style="border-radius:12px;background:rgba(249,249,252,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);box-shadow:0 20px 50px rgba(0,0,0,0.25);color:#1d1d1f;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:12px 14px 0">
+            <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+          </div>
+          <div style="padding:18px 28px 24px;display:flex;flex-direction:column;gap:16px">
+            <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.5)">Шаг 2 из 4 · Аудио</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">Что слушаем?</div>
+              <div style="font-size:13px;line-height:1.5;color:rgba(60,60,67,0.65)">Два канала пишутся раздельно — Whisper лучше разберёт, кто что сказал.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.55)">Микрофон</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid rgba(0,0,0,0.12);border-radius:8px;padding:8px 12px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.06)">
+                  <div style="font-size:13px">MacBook Pro Microphone</div>
+                  <svg width="9" height="14" viewBox="0 0 9 14"><path d="M1.5 5L4.5 2l3 3M1.5 9l3 3 3-3" stroke="rgba(60,60,67,0.5)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;padding:2px 2px 0">
+                  <div style="font-size:10.5px;color:rgba(60,60,67,0.5);flex:none">проверка</div>
+                  <div style="flex:1;height:4px;border-radius:2px;background:rgba(0,0,0,0.1);overflow:hidden"><div style="width:58%;height:100%;border-radius:2px;background:#34C759"></div></div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.55)">Системный звук</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid rgba(0,0,0,0.12);border-radius:8px;padding:8px 12px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.06)">
+                  <div style="font-size:13px">Весь звук Mac (ScreenCaptureKit)</div>
+                  <svg width="9" height="14" viewBox="0 0 9 14"><path d="M1.5 5L4.5 2l3 3M1.5 9l3 3 3-3" stroke="rgba(60,60,67,0.5)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <div style="font-size:10.5px;color:rgba(60,60,67,0.5);padding:2px 2px 0">Zoom, Meet, Slack Huddle — что угодно, без плагинов</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div style="display:flex;gap:6px">
+                <div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:#007AFF"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:13px;color:rgba(60,60,67,0.55);cursor:pointer">Назад</div>
+                <div style="font-size:13px;font-weight:600;color:#fff;background:#007AFF;border-radius:7px;padding:7px 16px;cursor:pointer" style-hover="background:#0066d6">Далее</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3 LIGHT -->
+      <div data-screen-label="Onboarding step 3 light" style="border-radius:16px;background:#dfe4f0;background-image:radial-gradient(420px 280px at 20% 10%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(360px 240px at 85% 95%,rgba(120,160,255,0.45),transparent 60%);padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+        <div style="border-radius:12px;background:rgba(249,249,252,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);box-shadow:0 20px 50px rgba(0,0,0,0.25);color:#1d1d1f;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:12px 14px 0">
+            <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+          </div>
+          <div style="padding:18px 28px 24px;display:flex;flex-direction:column;gap:16px">
+            <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.5)">Шаг 3 из 4 · Telegram</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">Куда прислать фоллоу-ап?</div>
+              <div style="font-size:13px;line-height:1.5;color:rgba(60,60,67,0.65)">Telegram получает только готовый текст — ни аудио, ни расшифровку целиком.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;align-items:center;background:rgba(0,0,0,0.035);border:1px solid rgba(0,0,0,0.06);border-radius:10px;padding:18px 16px">
+              <div style="font-size:12px;color:rgba(60,60,67,0.65)">Отправьте код боту <span style="color:#007AFF;font-weight:600">@meetmind_bot</span></div>
+              <div style="font-size:24px;font-weight:700;letter-spacing:0.14em;white-space:nowrap;font-variant-numeric:tabular-nums;background:#fff;border:1px dashed rgba(0,0,0,0.2);border-radius:8px;padding:8px 14px 8px 18px">MM-7F3K</div>
+              <div style="display:flex;align-items:center;gap:7px">
+                <div style="width:11px;height:11px;flex:none;animation:mmSpin 1s linear infinite"><svg width="11" height="11" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="rgba(60,60,67,0.18)" stroke-width="2.4"></circle><circle cx="7" cy="7" r="5.5" fill="none" stroke="#007AFF" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="9 26"></circle></svg></div>
+                <div style="font-size:11.5px;color:rgba(60,60,67,0.55)">Ждём сообщение от бота…</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div style="display:flex;gap:6px">
+                <div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:#007AFF"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:13px;color:rgba(60,60,67,0.55);cursor:pointer">Пропустить</div>
+                <div style="font-size:13px;font-weight:600;color:#1d1d1f;background:rgba(0,0,0,0.07);border-radius:7px;padding:7px 16px;cursor:pointer">Далее</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 4 LIGHT -->
+      <div data-screen-label="Onboarding step 4 light" style="border-radius:16px;background:#dfe4f0;background-image:radial-gradient(420px 280px at 20% 10%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(360px 240px at 85% 95%,rgba(120,160,255,0.45),transparent 60%);padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+        <div style="border-radius:12px;background:rgba(249,249,252,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);box-shadow:0 20px 50px rgba(0,0,0,0.25);color:#1d1d1f;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:7px;padding:12px 14px 0">
+            <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+          </div>
+          <div style="padding:18px 28px 24px;display:flex;flex-direction:column;gap:16px">
+            <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.5)">Шаг 4 из 4 · Claude (по желанию)</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">Саммари поумнее?</div>
+              <div style="font-size:13px;line-height:1.5;color:rgba(60,60,67,0.65)">Claude-бустер шлифует формулировки и вылавливает решения. Это единственная функция, которая ходит в облако — и она выключена.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;background:rgba(0,0,0,0.035);border:1px solid rgba(0,0,0,0.06);border-radius:10px;padding:14px 16px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="16" height="16" viewBox="0 0 14 14" style="flex:none"><path d="M7 0.5l1.5 4.2L13 6.2l-4.5 1.5L7 12l-1.5-4.3L1 6.2l4.5-1.5L7 0.5z" fill="#D97757"></path></svg>
+                <div style="font-size:13px;font-weight:600;flex:1">Claude-бустер</div>
+                <div style="width:36px;height:21px;border-radius:11px;background:rgba(0,0,0,0.16);position:relative;flex:none;cursor:pointer"><div style="position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;align-items:center;gap:7px"><svg width="10" height="10" viewBox="0 0 14 14"><path d="M2.5 7.4l3 3 6-6.4" stroke="#248A3D" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg><div style="font-size:11.5px;color:rgba(60,60,67,0.65)">Уходит: только текст саммари</div></div>
+                <div style="display:flex;align-items:center;gap:7px"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="#D70015" stroke-width="1.8" stroke-linecap="round"></path></svg><div style="font-size:11.5px;color:rgba(60,60,67,0.65)">Не уходит никогда: аудио и полная расшифровка</div></div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div style="display:flex;gap:6px">
+                <div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:rgba(0,0,0,0.15)"></div><div style="width:7px;height:7px;border-radius:50%;background:#007AFF"></div>
+              </div>
+              <div style="font-size:13px;font-weight:600;color:#fff;background:#007AFF;border-radius:7px;padding:7px 16px;cursor:pointer" style-hover="background:#0066d6">Готово</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ GROUP 4 · FOLLOW-UP WINDOW ============ -->
+  <div style="display:flex;flex-direction:column;gap:20px" data-screen-label="4 Follow-up window">
+    <div style="display:flex;align-items:baseline;gap:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:#6a6a76">04</div>
+      <div style="font-size:16px;font-weight:700">«Встреча обработана» — превью фоллоу-апа</div>
+    </div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- FOLLOW-UP DARK -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Тёмная</div>
+        <div style="width:640px;border-radius:16px;background:#0e0e16;background-image:radial-gradient(520px 340px at 20% 10%,rgba(94,92,230,0.4),transparent 65%),radial-gradient(440px 300px at 85% 95%,rgba(10,132,255,0.3),transparent 60%);padding:28px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+          <div data-screen-label="Follow-up dark" style="border-radius:12px;background:rgba(30,30,34,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,0.12);box-shadow:0 24px 60px rgba(0,0,0,0.55);color:#f2f2f7;overflow:hidden">
+            <div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.07)">
+              <div style="display:flex;gap:7px;width:70px;flex:none">
+                <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+              </div>
+              <div style="flex:1;text-align:center;font-size:12px;font-weight:600;color:rgba(235,235,245,0.55)">Встреча обработана</div>
+              <div style="width:70px;flex:none"></div>
+            </div>
+            <div style="padding:20px 24px 22px;display:flex;flex-direction:column;gap:16px">
+              <div style="display:flex;align-items:flex-start;gap:12px">
+                <div style="display:flex;flex-direction:column;gap:3px;flex:1">
+                  <div style="font-size:18px;font-weight:700;letter-spacing:-0.01em">{{ meetingName }}</div>
+                  <div style="font-size:12px;color:rgba(235,235,245,0.5)">Сегодня, 14:00 · 42 мин · Настя, Дима, Игорь</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;background:rgba(48,209,88,0.14);border:1px solid rgba(48,209,88,0.25);border-radius:7px;padding:5px 10px;flex:none">
+                  <svg width="9" height="11" viewBox="0 0 10 12"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#30D158"></path></svg>
+                  <div style="font-size:11px;font-weight:600;color:#30D158">Локально · Whisper large-v3</div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45)">Контекст</div>
+                <div style="font-size:13px;line-height:1.55;color:rgba(235,235,245,0.85)">Обсуждали запуск беты: скоуп v0.9, приоритет багов транскрипции и план анонса. Спорили про Windows-версию — решили не тащить её в первый релиз.</div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45)">Решения</div>
+                <div style="display:flex;flex-direction:column;gap:5px">
+                  <div style="display:flex;gap:9px;align-items:baseline"><div style="width:5px;height:5px;border-radius:2px;background:#0A84FF;flex:none;transform:translateY(-2px)"></div><div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.85)">Бета выходит 28 июля, только macOS</div></div>
+                  <div style="display:flex;gap:9px;align-items:baseline"><div style="width:5px;height:5px;border-radius:2px;background:#0A84FF;flex:none;transform:translateY(-2px)"></div><div style="font-size:13px;line-height:1.5;color:rgba(235,235,245,0.85)">Claude-бустер остаётся выключенным по умолчанию</div></div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(235,235,245,0.45)">Action items</div>
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:9px 12px">
+                    <div style="width:15px;height:15px;border-radius:4px;border:1.5px solid rgba(235,235,245,0.35);flex:none;cursor:pointer"></div>
+                    <div style="font-size:13px;flex:1"><span style="font-weight:600">Настя</span> — лендинг беты</div>
+                    <div style="font-size:11px;font-weight:600;color:#FF9F0A;background:rgba(255,159,10,0.13);border-radius:5px;padding:3px 8px;flex:none">до 18 июля</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:9px 12px">
+                    <div style="width:15px;height:15px;border-radius:4px;border:1.5px solid rgba(235,235,245,0.35);flex:none;cursor:pointer"></div>
+                    <div style="font-size:13px;flex:1"><span style="font-weight:600">Дима</span> — фикс рассинхрона системного звука</div>
+                    <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.55);background:rgba(255,255,255,0.08);border-radius:5px;padding:3px 8px;flex:none">до 21 июля</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:9px 12px">
+                    <div style="width:15px;height:15px;border-radius:4px;border:1.5px solid rgba(235,235,245,0.35);flex:none;cursor:pointer"></div>
+                    <div style="font-size:13px;flex:1"><span style="font-weight:600">Игорь</span> — черновик анонса в Telegram-канал</div>
+                    <div style="font-size:11px;font-weight:600;color:rgba(235,235,245,0.55);background:rgba(255,255,255,0.08);border-radius:5px;padding:3px 8px;flex:none">до 24 июля</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:10px;padding-top:4px">
+                <div style="display:flex;align-items:center;gap:8px;height:34px;border-radius:8px;background:#0A84FF;padding:0 16px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:#0974df" style-active="transform:scale(0.98)">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><path d="M7 0.8l5.6 3.2v6L7 13.2 1.4 10v-6L7 0.8zm0 2L3.2 5v4L7 11.2 10.8 9V5L7 2.8z" fill="#fff"></path></svg>
+                  <div style="font-size:13px;font-weight:600;color:#fff">Открыть в Obsidian</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;height:34px;border-radius:8px;background:rgba(255,255,255,0.1);padding:0 16px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:rgba(255,255,255,0.16)">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><path d="M13.2 0.8L0.9 5.8c-0.6 0.25-0.55 1.05 0.05 1.25l3.05 1 1.15 3.55c0.2 0.6 0.95 0.7 1.3 0.2l1.7-2.4 3.1 2.3c0.5 0.35 1.2 0.1 1.3-0.5l1.7-9.4c0.1-0.65-0.5-1.15-1.05-0.9zM4.6 8.2l6.4-4.9-4.9 5.7-0.1 2-1.4-2.8z" fill="rgba(235,235,245,0.9)"></path></svg>
+                  <div style="font-size:13px;font-weight:600;color:rgba(235,235,245,0.9)">Переслать в Telegram</div>
+                </div>
+                <div style="flex:1"></div>
+                <div style="font-size:10.5px;color:rgba(235,235,245,0.35);text-align:right;line-height:1.4;min-width:0">Сохранено в ~/Obsidian/Meetings/<br>2026-07-14 — Мозгоёбы.md</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FOLLOW-UP LIGHT -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Светлая</div>
+        <div style="width:640px;border-radius:16px;background:#dfe4f0;background-image:radial-gradient(520px 340px at 20% 10%,rgba(255,255,255,0.95),transparent 65%),radial-gradient(440px 300px at 85% 95%,rgba(120,160,255,0.45),transparent 60%);padding:28px;box-shadow:0 8px 24px rgba(0,0,0,0.35)">
+          <div data-screen-label="Follow-up light" style="border-radius:12px;background:rgba(250,250,253,0.88);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(0,0,0,0.08);box-shadow:0 24px 60px rgba(0,0,0,0.3);color:#1d1d1f;overflow:hidden">
+            <div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(0,0,0,0.06)">
+              <div style="display:flex;gap:7px;width:70px;flex:none">
+                <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57"></div><div style="width:12px;height:12px;border-radius:50%;background:#FEBC2E"></div><div style="width:12px;height:12px;border-radius:50%;background:#28C840"></div>
+              </div>
+              <div style="flex:1;text-align:center;font-size:12px;font-weight:600;color:rgba(60,60,67,0.6)">Встреча обработана</div>
+              <div style="width:70px;flex:none"></div>
+            </div>
+            <div style="padding:20px 24px 22px;display:flex;flex-direction:column;gap:16px">
+              <div style="display:flex;align-items:flex-start;gap:12px">
+                <div style="display:flex;flex-direction:column;gap:3px;flex:1">
+                  <div style="font-size:18px;font-weight:700;letter-spacing:-0.01em">{{ meetingName }}</div>
+                  <div style="font-size:12px;color:rgba(60,60,67,0.55)">Сегодня, 14:00 · 42 мин · Настя, Дима, Игорь</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;background:rgba(52,199,89,0.12);border:1px solid rgba(52,199,89,0.3);border-radius:7px;padding:5px 10px;flex:none">
+                  <svg width="9" height="11" viewBox="0 0 10 12"><path d="M5 0.6a3 3 0 0 1 3 3v1.4h0.6a1.2 1.2 0 0 1 1.2 1.2v4a1.2 1.2 0 0 1-1.2 1.2H1.4a1.2 1.2 0 0 1-1.2-1.2v-4a1.2 1.2 0 0 1 1.2-1.2H2V3.6a3 3 0 0 1 3-3zm0 1.4a1.6 1.6 0 0 0-1.6 1.6v1.4h3.2V3.6A1.6 1.6 0 0 0 5 2z" fill="#248A3D"></path></svg>
+                  <div style="font-size:11px;font-weight:600;color:#248A3D">Локально · Whisper large-v3</div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(60,60,67,0.5)">Контекст</div>
+                <div style="font-size:13px;line-height:1.55;color:#3a3a3c">Обсуждали запуск беты: скоуп v0.9, приоритет багов транскрипции и план анонса. Спорили про Windows-версию — решили не тащить её в первый релиз.</div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(60,60,67,0.5)">Решения</div>
+                <div style="display:flex;flex-direction:column;gap:5px">
+                  <div style="display:flex;gap:9px;align-items:baseline"><div style="width:5px;height:5px;border-radius:2px;background:#007AFF;flex:none;transform:translateY(-2px)"></div><div style="font-size:13px;line-height:1.5;color:#3a3a3c">Бета выходит 28 июля, только macOS</div></div>
+                  <div style="display:flex;gap:9px;align-items:baseline"><div style="width:5px;height:5px;border-radius:2px;background:#007AFF;flex:none;transform:translateY(-2px)"></div><div style="font-size:13px;line-height:1.5;color:#3a3a3c">Claude-бустер остаётся выключенным по умолчанию</div></div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:rgba(60,60,67,0.5)">Action items</div>
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid rgba(0,0,0,0.07);border-radius:8px;padding:9px 12px;box-shadow:0 1px 2px rgba(0,0,0,0.04)">
+                    <div style="width:15px;height:15px;border-radius:4px;border:1.5px solid rgba(60,60,67,0.35);flex:none;cursor:pointer"></div>
+                    <div style="font-size:13px;flex:1"><span style="font-weight:600">Настя</span> — лендинг беты</div>
+                    <div style="font-size:11px;font-weight:600;color:#C93400;background:rgba(255,149,0,0.12);border-radius:5px;padding:3px 8px;flex:none">до 18 июля</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid rgba(0,0,0,0.07);border-radius:8px;padding:9px 12px;box-shadow:0 1px 2px rgba(0,0,0,0.04)">
+                    <div style="width:15px;height:15px;border-radius:4px;border:1.5px solid rgba(60,60,67,0.35);flex:none;cursor:pointer"></div>
+                    <div style="font-size:13px;flex:1"><span style="font-weight:600">Дима</span> — фикс рассинхрона системного звука</div>
+                    <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.6);background:rgba(0,0,0,0.06);border-radius:5px;padding:3px 8px;flex:none">до 21 июля</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid rgba(0,0,0,0.07);border-radius:8px;padding:9px 12px;box-shadow:0 1px 2px rgba(0,0,0,0.04)">
+                    <div style="width:15px;height:15px;border-radius:4px;border:1.5px solid rgba(60,60,67,0.35);flex:none;cursor:pointer"></div>
+                    <div style="font-size:13px;flex:1"><span style="font-weight:600">Игорь</span> — черновик анонса в Telegram-канал</div>
+                    <div style="font-size:11px;font-weight:600;color:rgba(60,60,67,0.6);background:rgba(0,0,0,0.06);border-radius:5px;padding:3px 8px;flex:none">до 24 июля</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:10px;padding-top:4px">
+                <div style="display:flex;align-items:center;gap:8px;height:34px;border-radius:8px;background:#007AFF;padding:0 16px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:#0066d6" style-active="transform:scale(0.98)">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><path d="M7 0.8l5.6 3.2v6L7 13.2 1.4 10v-6L7 0.8zm0 2L3.2 5v4L7 11.2 10.8 9V5L7 2.8z" fill="#fff"></path></svg>
+                  <div style="font-size:13px;font-weight:600;color:#fff">Открыть в Obsidian</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;height:34px;border-radius:8px;background:rgba(0,0,0,0.06);padding:0 16px;cursor:pointer;flex:none;white-space:nowrap" style-hover="background:rgba(0,0,0,0.1)">
+                  <svg width="13" height="13" viewBox="0 0 14 14"><path d="M13.2 0.8L0.9 5.8c-0.6 0.25-0.55 1.05 0.05 1.25l3.05 1 1.15 3.55c0.2 0.6 0.95 0.7 1.3 0.2l1.7-2.4 3.1 2.3c0.5 0.35 1.2 0.1 1.3-0.5l1.7-9.4c0.1-0.65-0.5-1.15-1.05-0.9zM4.6 8.2l6.4-4.9-4.9 5.7-0.1 2-1.4-2.8z" fill="#1d1d1f"></path></svg>
+                  <div style="font-size:13px;font-weight:600;color:#1d1d1f">Переслать в Telegram</div>
+                </div>
+                <div style="flex:1"></div>
+                <div style="font-size:10.5px;color:rgba(60,60,67,0.4);text-align:right;line-height:1.4;min-width:0">Сохранено в ~/Obsidian/Meetings/<br>2026-07-14 — Мозгоёбы.md</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ true }}">
+        <div style="width:330px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;flex:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#8f8f9c">Микро-анимации</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Окно всплывает у menubar: fade + translateY(−8 px), 220 ms ease-out. Секции появляются каскадом с задержкой 40 ms.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">Чекбокс action item: заливка цветом 150 ms, галочка рисуется stroke-draw 200 ms; строка получает лёгкий strikethrough.</div>
+          <div style="font-size:12.5px;line-height:1.55;color:#b9b9c4">«Переслать» после клика превращается в «✓ Отправлено» на 2 s (морф ширины spring), затем окно можно закрыть Esc.</div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;meetingName&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Мозгоёбы&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Контент&quot; },
+  &quot;boosterOn&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Состояния&quot; },
+  &quot;showNotes&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Презентация&quot; }
+}">
+class Component extends DCLogic {
+  renderVals() {
+    const boosterOn = this.props.boosterOn ?? true;
+    return {
+      meetingName: this.props.meetingName ?? 'Мозгоёбы',
+      showNotes: this.props.showNotes ?? true,
+      boosterOn: boosterOn,
+      boosterOff: !boosterOn
+    };
+  }
+}
+</script>
+</body>
+</html>
