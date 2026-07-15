@@ -213,23 +213,62 @@ class Transcriber:
             logger.error(f"Файл не найден: {audio_file}")
             return None
 
+        channels = 1
         try:
-            duration = float(sf.info(str(path)).duration)
+            info = sf.info(str(path))
+            duration = float(info.duration)
+            channels = int(info.channels)
         except Exception as e:
             logger.warning(f"Не удалось прочитать длительность {audio_file}: {e}")
             duration = 0.0
 
         try:
-            if duration > LONG_AUDIO_THRESHOLD_SEC:
-                segments = self._transcribe_chunked(str(path), duration)
-            else:
-                segments = self._transcribe_one(str(path))
+            if channels == 2:
+                # Стерео от CaptureEngine: ch0 = микрофон, ch1 = системный звук
+                # — раздельная расшифровка каналов даёт деление на спикеров
+                # без диаризации («Спикер 1» = я, «Спикер 2» = собеседники).
+                return self._transcribe_stereo(str(path), duration)
+            segments = self._transcribe_mono(str(path), duration)
             if segments is None:
                 return None
             return _dedupe_segments(segments)
         except Exception as e:
             logger.error(f"Ошибка транскрипции: {e}", exc_info=True)
             return None
+
+    def _transcribe_mono(self, audio_path: str, duration: float) -> Optional[list[dict]]:
+        if duration > LONG_AUDIO_THRESHOLD_SEC:
+            return self._transcribe_chunked(audio_path, duration)
+        return self._transcribe_one(audio_path)
+
+    # Метки каналов стерео-записи (порядок = порядок каналов в WAV).
+    STEREO_SPEAKERS = ("Спикер 1", "Спикер 2")
+
+    def _transcribe_stereo(self, audio_path: str, duration: float) -> Optional[list[dict]]:
+        """Разложить стерео на mic.wav/sys.wav (ffmpeg channelsplit), расшифровать
+        каждый канал отдельно и слить сегменты по общему таймлайну (каналы
+        синхронны — таймкоды не сдвигаются)."""
+        with tempfile.TemporaryDirectory(prefix="meetmind_stereo_") as tmp:
+            mic_path = Path(tmp) / "mic.wav"
+            sys_path = Path(tmp) / "sys.wav"
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", audio_path,
+                 "-filter_complex", "[0:a]channelsplit=channel_layout=stereo[l][r]",
+                 "-map", "[l]", "-ar", "16000", str(mic_path),
+                 "-map", "[r]", "-ar", "16000", str(sys_path)],
+                check=True, capture_output=True)
+            merged: list[dict] = []
+            for speaker, channel_path in zip(self.STEREO_SPEAKERS,
+                                             (mic_path, sys_path)):
+                segments = self._transcribe_mono(str(channel_path), duration)
+                if segments is None:
+                    continue
+                merged.extend(
+                    dict(s, speaker=speaker) for s in _dedupe_segments(segments))
+        if not merged:
+            return None
+        merged.sort(key=lambda s: s.get("start") or 0.0)
+        return merged
 
     def _transcribe_chunked(self, audio_path: str, duration: float) -> list[dict]:
         with tempfile.TemporaryDirectory(prefix="meetmind_chunks_") as tmp:

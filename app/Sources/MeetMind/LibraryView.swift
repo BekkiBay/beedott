@@ -721,9 +721,17 @@ struct MeetingDetailView: View {
                         .buttonStyle(.plain)
                         .frame(width: 76, alignment: .leading)
 
-                        Text(seg.text)
-                            .font(.system(size: 13))
-                            .lineSpacing(4)
+                        VStack(alignment: .leading, spacing: 1) {
+                            if let speaker = seg.speaker {
+                                Text(speaker)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(
+                                        Theme.speaker(seg.speakerIndex, scheme))
+                            }
+                            Text(seg.text)
+                                .font(.system(size: 13))
+                                .lineSpacing(4)
+                        }
                     }
                 }
             }

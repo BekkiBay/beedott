@@ -38,12 +38,33 @@ def reset() -> None:
     _disabled = False
 
 
-def _build_prompt(transcript: str, ollama_followup: dict, meta: dict) -> str:
+_SCHEMA_RULES = """Верни ОТВЕТ СТРОГО в виде одного JSON-объекта (никакого текста вне JSON) со
+следующими ключами:
+- "context": строка — 2-3 предложения о чём встреча, к чему пришли
+- "discussed": список строк — пункты обсуждения
+- "decisions": список строк — конкретные принятые решения
+- "action_items": список объектов вида
+  {"task": "что сделать", "owner": "кто отвечает", "deadline": "2026-07-20" | "asap" | null}
+- "open_questions": список строк — что осталось нерешённым
+
+Правила:
+- Не выдумывай факты, которых нет в транскрипте.
+- Если имена спикеров неразличимы — называй их "Спикер 1", "Спикер 2".
+- Набор ключей и типы должны СТРОГО совпадать со схемой, без лишних ключей.
+- Ответ — ТОЛЬКО валидный JSON: без markdown-обёртки ```json, без преамбулы.
+"""
+
+
+def _meta_line(meta: dict) -> str:
     title = meta.get("title") or "Без названия"
     duration = meta.get("duration_min")
     duration_str = f"{duration} минут" if duration is not None else "неизвестна"
+    return f"«{title}» (длительность {duration_str})"
+
+
+def _build_prompt(transcript: str, ollama_followup: dict, meta: dict) -> str:
     draft = {k: v for k, v in ollama_followup.items() if k != "degraded"}
-    return f"""Ниже — транскрипт встречи «{title}» (длительность {duration_str}) и
+    return f"""Ниже — транскрипт встречи {_meta_line(meta)} и
 черновик фоллоу-апа, сделанный локальной моделью. Улучши черновик: сверь его с
 транскриптом, исправь ошибки, добавь пропущенные решения/задачи, убери выдумки.
 
@@ -55,20 +76,18 @@ def _build_prompt(transcript: str, ollama_followup: dict, meta: dict) -> str:
 Черновик фоллоу-апа (JSON):
 {json.dumps(draft, ensure_ascii=False, indent=2)}
 
-Верни ОТВЕТ СТРОГО в виде одного JSON-объекта (никакого текста вне JSON) со
-следующими ключами:
-- "context": строка — 2-3 предложения о чём встреча, к чему пришли
-- "discussed": список строк — пункты обсуждения
-- "decisions": список строк — конкретные принятые решения
-- "action_items": список объектов вида
-  {{"task": "что сделать", "owner": "кто отвечает", "deadline": "2026-07-20" | "asap" | null}}
-- "open_questions": список строк — что осталось нерешённым
+{_SCHEMA_RULES}"""
 
-Правила:
-- Не выдумывай факты, которых нет в транскрипте.
-- Набор ключей и типы должны СТРОГО совпадать со схемой, без лишних ключей.
-- Ответ — ТОЛЬКО валидный JSON: без markdown-обёртки ```json, без преамбулы.
-"""
+
+def _build_direct_prompt(transcript: str, meta: dict) -> str:
+    return f"""Ниже — транскрипт встречи {_meta_line(meta)}. Составь по нему фоллоу-ап.
+
+Транскрипт:
+---
+{transcript}
+---
+
+{_SCHEMA_RULES}"""
 
 
 def _strip_fence(text: str) -> str:
@@ -113,6 +132,37 @@ def boost(
         oauth_token: CLAUDE_CODE_OAUTH_TOKEN; по умолчанию из окружения
             (config.env уже загружен в os.environ через load_dotenv).
     """
+    result = _run_claude(_build_prompt(transcript, ollama_followup, meta),
+                         model=model, oauth_token=oauth_token)
+    if result is not None:
+        logger.info("claude_booster: фоллоу-ап улучшен")
+    return result
+
+
+def summarize_direct(
+    transcript: str,
+    meta: dict,
+    *,
+    model: Optional[str] = None,
+    oauth_token: Optional[str] = None,
+) -> Optional[dict]:
+    """Саммари напрямую через claude CLI, без Ollama-черновика — fallback
+    stages.summarize когда Ollama недоступна (нет модели / не поднялась / RAM),
+    а Claude включён. None = fallback не удался, стадия уходит в failed_retry."""
+    result = _run_claude(_build_direct_prompt(transcript, meta),
+                         model=model, oauth_token=oauth_token)
+    if result is not None:
+        logger.info("claude_booster: фоллоу-ап собран Claude напрямую (без Ollama)")
+    return result
+
+
+def _run_claude(
+    prompt: str,
+    *,
+    model: Optional[str] = None,
+    oauth_token: Optional[str] = None,
+) -> Optional[dict]:
+    """Общий headless-вызов claude CLI → валидированный followup-dict | None."""
     if _disabled:
         return None
 
@@ -133,7 +183,6 @@ def boost(
         "--append-system-prompt", SYSTEM_PROMPT,
         "--output-format", "text",
     ]
-    prompt = _build_prompt(transcript, ollama_followup, meta)
 
     try:
         r = subprocess.run(
@@ -159,7 +208,4 @@ def boost(
         logger.warning("claude_booster: невалидный JSON от Claude — %s", exc)
         return None
 
-    result = dict(followup)
-    result["degraded"] = False
-    logger.info("claude_booster: фоллоу-ап улучшен моделью %s", model)
-    return result
+    return dict(followup, degraded=False)

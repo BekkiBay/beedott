@@ -11,7 +11,7 @@ import json
 import pytest
 
 import config
-from daemon import db, stages
+from daemon import db, memguard, stages
 from daemon.app import DaemonApp
 from daemon.paths import session_dir
 from daemon.states import State
@@ -56,6 +56,8 @@ def _mk_session(con, *, title="Синк", state=State.DELIVERED, transcript=True
 
 def _summarized(tmp_path, monkeypatch, *, use_claude=False):
     monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    # RAM-гвард внутри stages.summarize не должен зависеть от машины
+    monkeypatch.setattr(memguard, "available", lambda: 64 * 2**30)
     con = db.connect()
     sid = _mk_session(con, state=State.TRANSCRIBED, followup=False)
     monkeypatch.setattr(stages, "summarize_ollama",
@@ -227,6 +229,7 @@ def test_summarize_respects_engine_override_local(tmp_path, monkeypatch):
     """override=local: бустер не зовётся даже при USE_CLAUDE_CODE=True;
     файл override съедается (одноразовый)."""
     monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    monkeypatch.setattr(memguard, "available", lambda: 64 * 2**30)
     con = db.connect()
     sid = _mk_session(con, state=State.TRANSCRIBED, followup=False)
     (session_dir(sid) / "engine_override").write_text("local")
@@ -341,3 +344,48 @@ def test_reprocess_during_failed_retry_requeues_without_crash(app):
     assert job["status"] == "queued"
     assert job["next_retry_at"] is None
     assert db.get_session(con, sid)["state"] == State.TRANSCRIBING  # не тронут
+
+
+def test_resummarize_during_summarizing_requeues_without_crash(app):
+    """«Пересобрать саммари» пока стадия в failed_retry (state=SUMMARIZING):
+    не ValueError, а requeue + engine_override (лог 2026-07-15: illegal
+    transition SUMMARIZING -> TRANSCRIBED)."""
+    con = app._con
+    sid = _mk_session(con, state=State.SUMMARIZING, followup=False)
+    db.enqueue_job(con, sid, "summarize")
+    con.execute(
+        "UPDATE pipeline_jobs SET status='failed_retry', attempts=3,"
+        " next_retry_at='2099-01-01T00:00:00+00:00' WHERE session_id=?", (sid,))
+    con.commit()
+
+    app.resummarize({"session_id": sid, "engine": "claude"})  # не должен бросить
+
+    job = con.execute("SELECT status, next_retry_at FROM pipeline_jobs"
+                      " WHERE session_id=? AND stage='summarize'", (sid,)).fetchone()
+    assert job["status"] == "queued" and job["next_retry_at"] is None
+    assert (session_dir(sid) / "engine_override").read_text() == "claude"
+
+
+def test_transcribe_stage_writes_speaker_prefixed_lines(tmp_path, monkeypatch):
+    """Стерео-сегменты со speaker → transcript.txt в виде «Спикер N: текст»."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = _mk_session(con, state=State.RECORDED, transcript=False, followup=False)
+    con.execute("UPDATE sessions SET audio_path=? WHERE id=?",
+                (str(session_dir(sid) / "audio.wav"), sid))
+    con.commit()
+
+    class FakeTranscriber:
+        def transcribe(self, audio_path):
+            return [
+                {"start": 0.0, "end": 2.0, "text": "привет", "speaker": "Спикер 1"},
+                {"start": 2.5, "end": 4.0, "text": "по релизу", "speaker": "Спикер 2"},
+            ]
+
+    monkeypatch.setattr(stages, "Transcriber", FakeTranscriber)
+    stages.transcribe(db.get_session(con, sid))
+
+    text = (session_dir(sid) / "transcript.txt").read_text(encoding="utf-8")
+    assert text == "Спикер 1: привет\nСпикер 2: по релизу"
+    segs = json.loads((session_dir(sid) / "transcript.json").read_text("utf-8"))
+    assert segs[0]["speaker"] == "Спикер 1"

@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
+import config
 from daemon import db, memguard
 from daemon.states import State
 
@@ -95,7 +96,10 @@ class Orchestrator:
         session = db.get_session(self.con, sid)
 
         try:
-            memguard.require(stage)
+            # summarize при включённом Claude гвардится внутри самой стадии
+            # (stages.summarize): мало RAM → фоллбек на Claude, а не блок стадии.
+            if not (stage == "summarize" and config.USE_CLAUDE_CODE):
+                memguard.require(stage)
             fn = self.stages[stage]
             fn(session)
         except Exception as exc:  # noqa: BLE001 — любой сбой стадии = failed_retry

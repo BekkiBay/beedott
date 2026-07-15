@@ -88,3 +88,55 @@ def test_transcribe_fixture():
     segs = Transcriber().transcribe("tests/fixtures/sample_ru.wav")
     assert segs is not None
     assert len(segs) > 0 and any(s["text"].strip() for s in segs)
+
+
+# ─── стерео: деление на спикеров по каналам (mic=Спикер 1, tap=Спикер 2) ─────
+
+
+def _write_stereo_wav(path, seconds=1.0, rate=16000):
+    import numpy as np
+    import soundfile as sf
+    n = int(seconds * rate)
+    t = np.linspace(0, seconds, n, endpoint=False)
+    left = 0.3 * np.sin(2 * np.pi * 440 * t)   # микрофон
+    right = 0.3 * np.sin(2 * np.pi * 220 * t)  # системный звук
+    sf.write(str(path), np.column_stack([left, right]), rate)
+
+
+def test_transcribe_stereo_splits_speakers(tmp_path, monkeypatch):
+    """Стерео-WAV из CaptureEngine (ch0=мик, ch1=системный звук): каналы
+    расшифровываются раздельно, сегменты сливаются по таймлайну со спикерами."""
+    from daemon.transcriber import Transcriber
+    wav = tmp_path / "audio.wav"
+    _write_stereo_wav(wav)
+
+    def fake_one(self, audio_path):
+        if "mic" in audio_path:
+            return [{"start": 0.0, "end": 2.0, "text": "привет, начнём"},
+                    {"start": 6.0, "end": 8.0, "text": "беру на себя"}]
+        return [{"start": 2.5, "end": 5.5, "text": "давайте по релизу"}]
+
+    monkeypatch.setattr(Transcriber, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Transcriber, "_transcribe_one", fake_one)
+
+    segments = Transcriber().transcribe(str(wav))
+
+    assert [s["speaker"] for s in segments] == ["Спикер 1", "Спикер 2", "Спикер 1"]
+    assert [s["start"] for s in segments] == [0.0, 2.5, 6.0]  # общий таймлайн
+    assert segments[1]["text"] == "давайте по релизу"
+
+
+def test_transcribe_mono_has_no_speaker_labels(tmp_path, monkeypatch):
+    import numpy as np
+    import soundfile as sf
+    from daemon.transcriber import Transcriber
+    wav = tmp_path / "audio.wav"
+    sf.write(str(wav), np.zeros(16000, dtype="float32"), 16000)
+
+    monkeypatch.setattr(Transcriber, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(
+        Transcriber, "_transcribe_one",
+        lambda self, p: [{"start": 0.0, "end": 1.0, "text": "моно"}])
+
+    segments = Transcriber().transcribe(str(wav))
+    assert segments == [{"start": 0.0, "end": 1.0, "text": "моно"}]

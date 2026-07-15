@@ -116,8 +116,11 @@ def reprocess(con, sid: str) -> None:
 def resummarize(con, sid: str) -> None:
     """«Пересобрать саммари» (экран 06): из DELIVERED/FAILED назад в TRANSCRIBED,
     summarize+deliver в queued, доставки сброшены в pending (идемпотентность
-    deliver иначе пропустит уже отправленные sinks). Транскрипция не трогается."""
-    set_state(con, sid, State.TRANSCRIBED)
+    deliver иначе пропустит уже отправленные sinks). Транскрипция не трогается.
+
+    Если сессия ещё SUMMARIZING/DELIVERING (failed_retry) — откат состояния
+    невозможен и не нужен (try_set_state пропустит), requeue джобов достаточно."""
+    try_set_state(con, sid, State.TRANSCRIBED)
     con.execute(
         "UPDATE pipeline_jobs SET status='queued', attempts=0, next_retry_at=NULL,"
         " updated_at=? WHERE session_id=? AND stage IN ('summarize','deliver')",

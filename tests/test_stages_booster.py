@@ -8,11 +8,21 @@ USE_CLAUDE_CODE=False → boost не вызывается вообще.
 """
 import json
 
+import pytest
+
 import config
-from daemon import claude_booster, db, stages
+from daemon import claude_booster, db, memguard, stages
 from daemon.paths import session_dir
 from daemon.states import State
 from tests.conftest import GOOD_FOLLOWUP as GOOD
+
+
+@pytest.fixture(autouse=True)
+def _no_memory_limit(monkeypatch):
+    """stages.summarize сам зовёт memguard.require — реальная свободная RAM
+    машины не должна решать, каким путём (Ollama/Claude) пойдёт тест."""
+    monkeypatch.setattr(memguard, "available", lambda: 64 * 2**30)
+
 
 BOOSTED = dict(GOOD, context="улучшено клодом", degraded=False)
 
@@ -71,3 +81,88 @@ def test_boost_not_called_when_disabled_in_config(tmp_path, monkeypatch):
     assert calls == []
     assert followup["context"] == GOOD["context"]
     assert config.OLLAMA_MODEL in md
+
+
+# ───────── fallback: Ollama недоступна → саммари напрямую через Claude ────────
+
+
+def _transcribed_session(tmp_path, monkeypatch):
+    from daemon.paths import session_dir
+    from daemon.states import State
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = db.create_session(con, source="manual", title="Фоллбек")
+    for st in (State.RECORDING, State.RECORDED, State.TRANSCRIBING,
+               State.TRANSCRIBED):
+        db.set_state(con, sid, st)
+    (session_dir(sid) / "transcript.txt").write_text("текст", encoding="utf-8")
+    return con, sid
+
+
+def test_ollama_down_falls_back_to_claude_direct(tmp_path, monkeypatch):
+    from daemon import ollama_client
+    from daemon.paths import session_dir
+    con, sid = _transcribed_session(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "USE_CLAUDE_CODE", True)
+
+    def ollama_boom(transcript, meta):
+        raise ollama_client.OllamaModelMissing("нет модели")
+
+    monkeypatch.setattr(stages, "summarize_ollama", ollama_boom)
+    monkeypatch.setattr(claude_booster, "summarize_direct",
+                        lambda transcript, meta: dict(GOOD, degraded=False))
+    monkeypatch.setattr(claude_booster, "boost",
+                        lambda *a, **k: pytest.fail("boost не для fallback-пути"))
+
+    stages.summarize(db.get_session(con, sid))
+
+    followup = json.loads(
+        (session_dir(sid) / "followup.json").read_text(encoding="utf-8"))
+    assert followup["engine"].startswith("claude-code:")
+    assert followup["context"] == GOOD["context"]
+
+
+def test_low_ram_falls_back_to_claude_direct(tmp_path, monkeypatch):
+    from daemon import memguard
+    from daemon.paths import session_dir
+    con, sid = _transcribed_session(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "USE_CLAUDE_CODE", True)
+    monkeypatch.setattr(memguard, "available", lambda: 1 * 2**30)  # 1GB — мало
+    monkeypatch.setattr(
+        stages, "summarize_ollama",
+        lambda *a, **k: pytest.fail("Ollama не должна вызываться при 1GB RAM"))
+    monkeypatch.setattr(claude_booster, "summarize_direct",
+                        lambda transcript, meta: dict(GOOD, degraded=False))
+
+    stages.summarize(db.get_session(con, sid))
+
+    followup = json.loads(
+        (session_dir(sid) / "followup.json").read_text(encoding="utf-8"))
+    assert followup["engine"].startswith("claude-code:")
+
+
+def test_ollama_down_without_claude_reraises(tmp_path, monkeypatch):
+    from daemon import ollama_client
+    con, sid = _transcribed_session(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "USE_CLAUDE_CODE", False)
+
+    def ollama_boom(transcript, meta):
+        raise ollama_client.OllamaDown("лежит")
+
+    monkeypatch.setattr(stages, "summarize_ollama", ollama_boom)
+    with pytest.raises(ollama_client.OllamaDown):
+        stages.summarize(db.get_session(con, sid))
+
+
+def test_claude_direct_failure_reraises_original(tmp_path, monkeypatch):
+    from daemon import ollama_client
+    con, sid = _transcribed_session(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "USE_CLAUDE_CODE", True)
+
+    def ollama_boom(transcript, meta):
+        raise ollama_client.OllamaDown("лежит")
+
+    monkeypatch.setattr(stages, "summarize_ollama", ollama_boom)
+    monkeypatch.setattr(claude_booster, "summarize_direct", lambda *a, **k: None)
+    with pytest.raises(ollama_client.OllamaDown):
+        stages.summarize(db.get_session(con, sid))

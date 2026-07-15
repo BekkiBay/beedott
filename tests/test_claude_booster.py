@@ -147,3 +147,27 @@ def test_boost_missing_binary_disables_as_auth_failure():
          patch("daemon.claude_booster.notify"):
         assert _boost() is None
     assert claude_booster.is_disabled()
+
+
+# ─────────────── summarize_direct: Claude вместо Ollama (fallback) ────────────
+
+
+def test_summarize_direct_returns_validated_followup():
+    with patch("daemon.claude_booster.claude_auth.auth_ok", return_value=True), \
+         patch("daemon.claude_booster.claude_auth.claude_bin", return_value="/bin/claude"), \
+         patch("daemon.claude_booster.subprocess.run",
+               return_value=_proc(json.dumps(GOOD, ensure_ascii=False))) as mock_run:
+        result = claude_booster.summarize_direct(TRANSCRIPT, META)
+    assert result is not None
+    assert result["decisions"] == GOOD["decisions"]
+    assert result["degraded"] is False
+    stdin = mock_run.call_args.kwargs["input"].decode()
+    assert TRANSCRIPT in stdin
+    assert "Черновик" not in stdin  # прямой промпт, без Ollama-черновика
+
+
+def test_summarize_direct_invalid_json_returns_none():
+    with patch("daemon.claude_booster.claude_auth.auth_ok", return_value=True), \
+         patch("daemon.claude_booster.claude_auth.claude_bin", return_value="/bin/claude"), \
+         patch("daemon.claude_booster.subprocess.run", return_value=_proc("мусор")):
+        assert claude_booster.summarize_direct(TRANSCRIPT, META) is None

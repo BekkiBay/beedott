@@ -39,7 +39,14 @@ struct TranscriptSegment: Decodable, Identifiable {
     let start: Double
     let end: Double
     let text: String
-    var id: Double { start }
+    let speaker: String? // «Спикер 1» (микрофон) / «Спикер 2» (системный звук)
+    var id: String { "\(start)-\(speaker ?? "")" }
+
+    /// Индекс для палитры Theme.speaker: «Спикер N» → N-1.
+    var speakerIndex: Int {
+        guard let speaker, let n = Int(speaker.split(separator: " ").last ?? "") else { return 0 }
+        return max(0, n - 1)
+    }
 
     var timecode: String {
         let s = Int(start)

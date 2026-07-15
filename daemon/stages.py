@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import config
-from daemon import claude_booster, db
+from daemon import claude_booster, db, memguard
 from daemon.notifier import notify
 from daemon.ollama_client import OllamaDown, OllamaModelMissing
 from daemon.paths import session_dir
@@ -45,10 +45,19 @@ def _title(session) -> str:
     return f"Встреча {hhmm}"
 
 
+def _segment_line(s: dict) -> str:
+    """Строка транскрипта: с меткой спикера для стерео-записей (transcriber
+    STEREO_SPEAKERS), без — для старых моно."""
+    speaker = s.get("speaker")
+    text = s["text"].strip()
+    return f"{speaker}: {text}" if speaker else text
+
+
 def transcribe(session) -> None:
     sdir = session_dir(session["id"])
     segments = Transcriber().transcribe(session["audio_path"])
-    text = dedupe_lines("\n".join(s["text"].strip() for s in segments if s["text"].strip()))
+    text = dedupe_lines("\n".join(
+        _segment_line(s) for s in segments if s["text"].strip()))
     if not text.strip():
         raise RuntimeError("пустой транскрипт — в записи нет распознанной речи")
     (sdir / "transcript.txt").write_text(text, encoding="utf-8")
@@ -61,40 +70,49 @@ def transcribe(session) -> None:
 def summarize(session) -> None:
     sdir = session_dir(session["id"])
     transcript = (sdir / "transcript.txt").read_text(encoding="utf-8")
-    try:
-        followup = summarize_ollama(transcript, {
-            "title": _title(session),
-            "duration_min": _duration_min(session),
-        })
-    except (OllamaDown, OllamaModelMissing) as exc:
-        # SPEC_v3 §10 «Ollama не запущена»: демон уже попытался поднять её сам
-        # (daemon.ollama_client.ensure_running) — не вышло, автопереключения
-        # на Claude нет. Уведомляем СРАЗУ (не после 8 ретраев), один раз на
-        # сессию; оркестратор дальше делает штатный failed_retry.
-        logger.error("summarize %s: Ollama недоступна — %s", session["id"], exc)
-        if session["id"] not in _ollama_notified:
-            _ollama_notified.add(session["id"])
-            notify("MeetMind", f"{exc} — встреча в очереди, обработается после запуска")
-        raise
-    validate_followup({k: v for k, v in followup.items() if k not in _SERVICE_KEYS})
+    meta = {"title": _title(session), "duration_min": _duration_min(session)}
 
     # Одноразовый выбор движка при «Пересобрать саммари» (экран 06,
-    # app.resummarize): local — бустер пропускается, claude — форсируется.
+    # app.resummarize): local — Claude не трогаем, claude — форсируется.
     override_path = sdir / "engine_override"
     override = None
     if override_path.exists():
         override = override_path.read_text(encoding="utf-8").strip()
         override_path.unlink()
+    use_claude = config.USE_CLAUDE_CODE if override is None else override == "claude"
+
+    engine = config.OLLAMA_MODEL
+    claude_done = False
+    try:
+        # RAM-гвард Ollama здесь, а не в оркестраторе: Claude-путь память не
+        # ест, блокировать всю стадию из-за Ollama нельзя (см. orchestrator.py).
+        memguard.require("summarize")
+        followup = summarize_ollama(transcript, meta)
+    except (OllamaDown, OllamaModelMissing, memguard.NotEnoughMemory) as exc:
+        # SPEC_v3 §10 предписывал только failed_retry; решение 2026-07-15:
+        # при включённом Claude саммари идёт напрямую через claude CLI
+        # (Max-подписка) — встреча не застревает из-за Ollama/RAM.
+        if not use_claude:
+            logger.error("summarize %s: Ollama недоступна — %s", session["id"], exc)
+            if session["id"] not in _ollama_notified:
+                _ollama_notified.add(session["id"])
+                notify("MeetMind",
+                       f"{exc} — встреча в очереди, обработается после запуска")
+            raise
+        logger.warning("summarize %s: Ollama недоступна (%s) → саммари напрямую "
+                       "через Claude", session["id"], exc)
+        direct = claude_booster.summarize_direct(transcript, meta)
+        if direct is None:
+            raise
+        followup = direct
+        engine = f"claude-code:{config.CLAUDE_CODE_MODEL}"
+        claude_done = True
+    validate_followup({k: v for k, v in followup.items() if k not in _SERVICE_KEYS})
 
     # Claude-бустер (PLAN_v3 Task 7.4, opt-in): best-effort улучшение поверх
     # готовой Ollama-версии. Любой сбой внутри boost() → None, стадия не падает.
-    engine = config.OLLAMA_MODEL
-    use_claude = config.USE_CLAUDE_CODE if override is None else override == "claude"
-    if use_claude:
-        boosted = claude_booster.boost(transcript, followup, {
-            "title": _title(session),
-            "duration_min": _duration_min(session),
-        })
+    if use_claude and not claude_done:
+        boosted = claude_booster.boost(transcript, followup, meta)
         if boosted is not None:
             followup = boosted
             engine = f"claude-code:{config.CLAUDE_CODE_MODEL}"
