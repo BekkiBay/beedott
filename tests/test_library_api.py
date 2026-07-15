@@ -297,3 +297,47 @@ def test_backfill_fts_indexes_old_sessions(tmp_path, monkeypatch):
         "SELECT session_id FROM notes_fts WHERE notes_fts MATCH 'горение'").fetchone()
     assert row is not None and row["session_id"] == sid
     assert db.backfill_fts(con) == 0  # повторный вызов — идемпотентен
+
+
+# ──────────────── PATH для subprocess-зависимостей (ffmpeg) ──────────────────
+
+
+def test_ensure_tool_path_adds_homebrew(monkeypatch):
+    """Демон из .app получает PATH LaunchServices без /opt/homebrew/bin —
+    mlx-whisper не находит ffmpeg (FileNotFoundError). Хелпер дополняет PATH."""
+    from daemon.app import _ensure_tool_path
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    _ensure_tool_path()
+    import os
+    parts = os.environ["PATH"].split(":")
+    assert "/opt/homebrew/bin" in parts
+    assert "/usr/local/bin" in parts
+    assert parts[-2:] == ["/usr/bin", "/bin"]  # системные пути не потеряны
+
+    _ensure_tool_path()  # идемпотентен — без дублей
+    assert os.environ["PATH"].split(":").count("/opt/homebrew/bin") == 1
+
+
+# ───────────── reprocess во время failed_retry (кнопка «Повторить») ──────────
+
+
+def test_reprocess_during_failed_retry_requeues_without_crash(app):
+    """Сессия ещё TRANSCRIBING (оркестратор в failed_retry-ретраях), юзер жмёт
+    «Повторить»: не ValueError (illegal transition), а мгновенный requeue."""
+    con = app._con
+    sid = _mk_session(con, state=State.TRANSCRIBING, transcript=False,
+                      followup=False)
+    db.enqueue_job(con, sid, "transcribe")
+    con.execute(
+        "UPDATE pipeline_jobs SET status='failed_retry', attempts=4,"
+        " next_retry_at='2099-01-01T00:00:00+00:00', last_error='ffmpeg'"
+        " WHERE session_id=?", (sid,))
+    con.commit()
+
+    app.reprocess({"session_id": sid})  # не должен бросить
+
+    job = con.execute("SELECT status, next_retry_at FROM pipeline_jobs"
+                      " WHERE session_id=?", (sid,)).fetchone()
+    assert job["status"] == "queued"
+    assert job["next_retry_at"] is None
+    assert db.get_session(con, sid)["state"] == State.TRANSCRIBING  # не тронут

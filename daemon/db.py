@@ -94,13 +94,18 @@ _REPROCESS_TARGET = {"transcribe": State.RECORDED, "summarize": State.TRANSCRIBE
 
 def reprocess(con, sid: str) -> None:
     """Выход из FAILED: найти самую раннюю непройденную chain-стадию, откатить
-    сессию к состоянию перед ней, сбросить её джобы в queued."""
+    сессию к состоянию перед ней, сбросить её джобы в queued.
+
+    Если сессия ещё в in-progress состоянии стадии (например TRANSCRIBING при
+    failed_retry — оркестратор ретраит сам), откат состояния невозможен и не
+    нужен: try_set_state тихо пропустит его, а сброс джоба в queued снимет
+    next_retry_at — ретрай пойдёт немедленно (кнопка «Повторить», экран 06)."""
     row = con.execute(
         "SELECT stage FROM pipeline_jobs WHERE session_id=? AND chain=1"
         " AND status != 'done' ORDER BY id LIMIT 1", (sid,)).fetchone()
     if row is None:
         return
-    set_state(con, sid, _REPROCESS_TARGET[row["stage"]])
+    try_set_state(con, sid, _REPROCESS_TARGET[row["stage"]])
     con.execute(
         "UPDATE pipeline_jobs SET status='queued', attempts=0, next_retry_at=NULL,"
         " updated_at=? WHERE session_id=? AND status IN ('failed','failed_retry')",

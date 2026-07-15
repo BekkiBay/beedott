@@ -21,6 +21,20 @@ from daemon.states import State
 
 logger = logging.getLogger(__name__)
 
+# Каталоги CLI-инструментов, которых нет в PATH LaunchServices/launchd.
+# Демон, запущенный Swift-супервизором из .app, без них не находит ffmpeg
+# (mlx-whisper декодирует аудио через ffmpeg subprocess) и claude.
+_TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
+
+
+def _ensure_tool_path() -> None:
+    """Дополнить PATH хоумбрю-каталогами (идемпотентно, в начало)."""
+    import os
+    current = os.environ.get("PATH", "").split(":")
+    missing = [d for d in _TOOL_DIRS if d not in current]
+    if missing:
+        os.environ["PATH"] = ":".join(missing + current)
+
 
 class DaemonApp:
     def __init__(self):
@@ -329,6 +343,7 @@ class DaemonApp:
         }
 
     def run(self) -> None:
+        _ensure_tool_path()
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s %(name)s %(levelname)s %(message)s")
