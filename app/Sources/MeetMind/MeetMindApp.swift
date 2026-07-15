@@ -46,9 +46,20 @@ final class AppModel: ObservableObject {
     @Published private(set) var busy: Bool = false
     @Published private(set) var lastErrorText: String? = nil
 
+    // --- данные для DropdownView / Библиотеки (экраны 02, 05-06)
+    @Published private(set) var recordingTitle: String? = nil
+    @Published private(set) var recordingStartedAt: Date? = nil
+    @Published private(set) var claudeEnabled: Bool = false
+    @Published private(set) var recentMeetings: [MeetingRow] = []
+    @Published private(set) var problemCount: Int = 0
+    @Published private(set) var micLevel: Double = 0
+    @Published private(set) var systemLevel: Double = 0
+    @Published private(set) var elapsedText: String = "00:00"
+
     let supervisor = DaemonSupervisor()
 
     private var statusTimer: Timer?
+    private var uiTimer: Timer?
     private var supervisorObserver: NSObjectProtocol?
     private let actionQueue = DispatchQueue(label: "com.jvmshid.meetmind.actions")
     private var started = false
@@ -76,6 +87,7 @@ final class AppModel: ObservableObject {
         supervisor.start()
         registerHotKeys()
         startStatusPolling()
+        startUITimer()
     }
 
     private func handleSupervisorState(_ state: DaemonSupervisor.RunState) {
@@ -115,15 +127,27 @@ final class AppModel: ObservableObject {
             do {
                 let result = try ControlClient.status()
                 let recording = result["recording"] as? String
+                let recTitle = result["recording_title"] as? String
+                let recStarted = (result["recording_started_at"] as? String)
+                    .flatMap { ISO8601DateFormatter().date(from: $0) }
+                let claude = (result["claude_enabled"] as? Bool) ?? false
                 let queueRows = (result["queue"] as? [[String: Any]]) ?? []
                 let queueTotal = queueRows.reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
                 let lastError = result["last_error"] as? [String: Any]
                 let errText = lastError.flatMap { $0["last_error"] as? String }
+                // Свежий список встреч тем же заходом (дропдаун: последние 3 +
+                // бейдж проблемных на «Все встречи…»).
+                let meetings = (try? ControlClient.sessionsList(limit: 50)) ?? []
                 Task { @MainActor in
                     self.recordingSessionId = recording
+                    self.recordingTitle = recTitle
+                    self.recordingStartedAt = recStarted
+                    self.claudeEnabled = claude
                     self.queueCount = queueTotal
                     self.daemonHealthy = true
                     self.lastErrorText = errText
+                    self.recentMeetings = meetings
+                    self.problemCount = meetings.filter { $0.status == "error" }.count
                     self.updateStatusLine()
                     self.refreshIcon()
                 }
@@ -135,6 +159,48 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Быстрый UI-тик (0.5с): таймер записи + уровни двух источников из
+    /// CaptureEngine. capture.engine пишется actionQueue-ом, читается здесь —
+    /// levels() внутри залочен, чтение ссылки engine — приемлемая гонка
+    /// (worst case: nil на один тик).
+    private func startUITimer() {
+        uiTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.uiTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        uiTimer = timer
+    }
+
+    private func uiTick() {
+        if let start = recordingStartedAt {
+            let s = max(0, Int(Date().timeIntervalSince(start)))
+            elapsedText = s >= 3600
+                ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+                : String(format: "%02d:%02d", s / 60, s % 60)
+        } else {
+            elapsedText = "00:00"
+        }
+        if recordingSessionId != nil, let lv = capture.engine?.levels() {
+            micLevel = Double(lv.mic)
+            systemLevel = Double(lv.system)
+        } else {
+            micLevel = 0
+            systemLevel = 0
+        }
+    }
+
+    // MARK: - действия дропдауна (экран 02)
+
+    func setClaude(enabled: Bool) {
+        claudeEnabled = enabled // оптимистично; статус-поллинг подтвердит
+        actionQueue.async { try? ControlClient.claudeSet(enabled: enabled) }
+    }
+
+    func openLibrary(sessionId: String?) {
+        LibraryWindow.show(sessionId: sessionId)
     }
 
     private func updateStatusLine() {
@@ -283,33 +349,26 @@ final class AppModel: ObservableObject {
     }
 }
 
-// MARK: - MenuBarContent
+// MARK: - MenuBarLabel (иконка, экран 01: 4 состояния)
 
-struct MenuBarContent: View {
+struct MenuBarLabel: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Button("Start Recording") { model.startRecording() }
-            .keyboardShortcut("r", modifiers: [.command, .shift])
-            .disabled(model.busy || model.recordingSessionId != nil || !model.daemonHealthy)
-
-        Button("Stop") { model.stopRecording() }
-            .disabled(model.busy || model.recordingSessionId == nil)
-
-        Button("Cancel Recording") { model.cancelRecording() }
-            .keyboardShortcut("x", modifiers: [.command, .shift])
-            .disabled(model.busy || model.recordingSessionId == nil)
-
-        Divider()
-
-        Text(model.statusLine)
-
-        Divider()
-
-        Button("Open Notes Folder") { model.openNotesFolder() }
-
-        Button("Quit MeetMind") { model.quit() }
-            .keyboardShortcut("q", modifiers: [.command])
+        // MenuBarExtra-label ограничен (template-рендер, без кастомного фона):
+        // плашку записи из макета отображаем как symbol + tabular-таймер.
+        if !model.daemonHealthy {
+            Image(systemName: "exclamationmark.triangle")
+        } else if model.recordingSessionId != nil {
+            HStack(spacing: 3) {
+                Image(systemName: "record.circle.fill")
+                Text(model.elapsedText).monospacedDigit()
+            }
+        } else if model.queueCount > 0 {
+            Image(systemName: "waveform.badge.magnifyingglass")
+        } else {
+            Image(systemName: "waveform")
+        }
     }
 }
 
@@ -336,10 +395,10 @@ struct MeetMindApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarContent(model: model)
+            DropdownView(model: model)
         } label: {
-            Text(model.iconText)
+            MenuBarLabel(model: model)
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
     }
 }

@@ -154,6 +154,7 @@ class DaemonApp:
             "recording": self._active_sid,
             "recording_title": rec_title,
             "recording_started_at": rec_started,
+            "claude_enabled": bool(config.USE_CLAUDE_CODE),
             "sessions": {r["state"]: r["n"] for r in rows},
             "queue": [dict(r) for r in jobs],
             "last_error": dict(last_err) if last_err else None,
@@ -341,6 +342,9 @@ class DaemonApp:
         removed = retention.sweep(orch_con)
         if removed:
             logger.info("retention: удалено аудио %d старых сессий", len(removed))
+        indexed = db.backfill_fts(orch_con)
+        if indexed:
+            logger.info("fts: доиндексировано %d старых сессий", indexed)
 
         server = ControlServer(self.handlers())
         server.start()

@@ -91,6 +91,35 @@ final class CaptureEngine {
     private var micChannelCount: UInt32 = 1
     private var tapChannelCount: UInt32 = 2
 
+    // Живые уровни для дропдауна (экран 02): пишутся IOProc-потоком в
+    // handleInput, читаются UI-таймером через levels(). NSLock — самый простой
+    // корректный вариант для пары Float между двумя потоками.
+    private let levelLock = NSLock()
+    private var micPeak: Float32 = 0
+    private var tapPeak: Float32 = 0
+
+    /// Текущие пики (0…1) микрофона и системного звука; после чтения затухают
+    /// сами по мере поступления новых буферов.
+    func levels() -> (mic: Float, system: Float) {
+        levelLock.lock()
+        defer { levelLock.unlock() }
+        return (mic: min(1, micPeak), system: min(1, tapPeak))
+    }
+
+    private func updateLevels(mic: [Float32], tap: [Float32]) {
+        func peak(_ samples: [Float32]) -> Float32 {
+            var p: Float32 = 0
+            for s in samples { p = max(p, abs(s)) }
+            return p
+        }
+        let m = peak(mic), t = peak(tap)
+        levelLock.lock()
+        // мгновенная атака, медленное затухание — как в аппаратных VU-метрах
+        micPeak = max(m, micPeak * 0.85)
+        tapPeak = max(t, tapPeak * 0.85)
+        levelLock.unlock()
+    }
+
     deinit {
         if isRunning { _ = stop() }
     }
@@ -282,6 +311,7 @@ final class CaptureEngine {
 
         let micMono = Self.downmixToMono(micBuffers)
         let tapMono = Self.downmixToMono(tapBuffers)
+        updateLevels(mic: micMono, tap: tapMono)
         let frameCount = max(micMono.count, tapMono.count)
         guard frameCount > 0 else { return }
 

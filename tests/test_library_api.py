@@ -270,3 +270,30 @@ def test_status_reports_recording_title_and_started_at(app):
     st = app.status({})
     assert st["recording_title"] == "Планёрка"
     assert st["recording_started_at"] is not None
+
+
+def test_status_reports_claude_enabled(app, monkeypatch):
+    monkeypatch.setattr(config, "USE_CLAUDE_CODE", True)
+    assert app.status({})["claude_enabled"] is True
+    monkeypatch.setattr(config, "USE_CLAUDE_CODE", False)
+    assert app.status({})["claude_enabled"] is False
+
+
+# ─────────────────────────────── FTS backfill ────────────────────────────────
+
+
+def test_backfill_fts_indexes_old_sessions(tmp_path, monkeypatch):
+    """Сессии, обработанные до появления FTS-индексации (файлы на диске есть,
+    строки в notes_fts нет), доиндексируются при старте демона."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = _mk_session(con, title="Старая встреча")
+    (session_dir(sid) / "followup.md").write_text("решили про горение", encoding="utf-8")
+
+    n = db.backfill_fts(con)
+
+    assert n == 1
+    row = con.execute(
+        "SELECT session_id FROM notes_fts WHERE notes_fts MATCH 'горение'").fetchone()
+    assert row is not None and row["session_id"] == sid
+    assert db.backfill_fts(con) == 0  # повторный вызов — идемпотентен

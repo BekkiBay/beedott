@@ -4,7 +4,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from daemon.paths import db_path
+from daemon.paths import db_path, session_dir
 from daemon.states import State, assert_transition
 
 SCHEMA = """
@@ -135,6 +135,27 @@ def index_note(con, sid: str, *, title: str, transcript: str, summary: str) -> N
         "INSERT INTO notes_fts(session_id, title, transcript, summary)"
         " VALUES(?,?,?,?)", (sid, title or "", transcript, summary))
     con.commit()
+
+
+def backfill_fts(con) -> int:
+    """Доиндексировать сессии, обработанные до появления FTS (файлы транскрипта
+    на диске есть, строки в notes_fts нет). Вызывается при старте демона,
+    идемпотентен. Возвращает число доиндексированных сессий."""
+    rows = con.execute(
+        "SELECT id, title FROM sessions WHERE state = ? AND id NOT IN"
+        " (SELECT session_id FROM notes_fts)", (State.DELIVERED,)).fetchall()
+    n = 0
+    for row in rows:
+        sdir = session_dir(row["id"])
+        tpath = sdir / "transcript.txt"
+        if not tpath.exists():
+            continue
+        mpath = sdir / "followup.md"
+        summary = mpath.read_text(encoding="utf-8") if mpath.exists() else ""
+        index_note(con, row["id"], title=row["title"] or "",
+                   transcript=tpath.read_text(encoding="utf-8"), summary=summary)
+        n += 1
+    return n
 
 
 def _fts_match(query: str) -> str | None:
