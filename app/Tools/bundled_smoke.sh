@@ -13,7 +13,7 @@ R="$MEETMIND_APPDIR/runtime"
 export PYTHONPATH="$RES/backend" PYTHONPYCACHEPREFIX="$R/pycache"
 mkdir -p "$R/bin"
 touch "$WORK/marker"
-trap '[ -n "${DPID:-}" ] && kill "$DPID" 2>/dev/null; echo "work dir: $WORK"' EXIT
+trap '[ -n "${DPID:-}" ] && kill "$DPID" 2>/dev/null; rm -rf "$WORK"' EXIT
 
 echo "== uv sync (чистый Python и пакеты)"
 cp "$RES/bin/uv" "$R/bin/uv"
@@ -29,7 +29,8 @@ echo "== status";        setup status
 echo "== install-model"; setup install-model | tail -2
 
 echo "== демон"
-(cd "$R" && PATH="$R/bin:/usr/bin:/bin" "$R/venv/bin/python" "$RES/backend/main.py" >"$WORK/daemon.log" 2>&1) &
+# exec — чтобы $! был сам python, а не подоболочка: trap убивает именно демон.
+(cd "$R" && PATH="$R/bin:/usr/bin:/bin" exec "$R/venv/bin/python" "$RES/backend/main.py" >"$WORK/daemon.log" 2>&1) &
 DPID=$!
 for _ in $(seq 1 30); do
     if (cd "$R" && "$R/venv/bin/python" -m daemon.cli health 2>/dev/null); then
