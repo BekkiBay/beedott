@@ -51,6 +51,29 @@ if [ -f "$APP_DIR/Resources/AppIcon.icns" ]; then
     cp "$APP_DIR/Resources/AppIcon.icns" "$CONTENTS/Resources/AppIcon.icns"
 fi
 
+# Встроенный режим (чистый Mac): исходники демона + uv. Рантайм ставит мастер
+# (RuntimeManager.syncRuntime) в ~/Library/Application Support/MeetMind/runtime.
+REPO_DIR="$(cd "$APP_DIR/.." && pwd)"
+BACKEND="$CONTENTS/Resources/backend"
+echo "-- backend -> $BACKEND"
+rm -rf "$BACKEND"
+mkdir -p "$BACKEND"
+cp "$REPO_DIR/main.py" "$REPO_DIR/config.py" "$REPO_DIR/pyproject.toml" "$REPO_DIR/uv.lock" "$BACKEND/"
+rsync -a --exclude '__pycache__' --exclude '*.pyc' "$REPO_DIR/daemon/" "$BACKEND/daemon/"
+
+UV_SRC="${UV_BIN:-$HOME/.local/bin/uv}"
+echo "-- uv ($UV_SRC) -> $CONTENTS/Resources/bin/uv"
+if ! file "$UV_SRC" | grep -q "arm64"; then
+    echo "uv не arm64: $UV_SRC (задай UV_BIN)" >&2; exit 1
+fi
+if otool -L "$UV_SRC" | tail -n +2 | grep -vqE '^[[:space:]]*(/usr/lib/|/System/Library/)'; then
+    echo "uv линкуется не только с системными библиотеками: $UV_SRC (нужен standalone, задай UV_BIN)" >&2; exit 1
+fi
+mkdir -p "$CONTENTS/Resources/bin"
+cp "$UV_SRC" "$CONTENTS/Resources/bin/uv"
+chmod 755 "$CONTENTS/Resources/bin/uv"
+codesign --force -s - "$CONTENTS/Resources/bin/uv"
+
 echo "-- codesign (ad-hoc, identifier=$BUNDLE_ID)"
 codesign --force -s - --identifier "$BUNDLE_ID" "$APP_BUNDLE"
 
