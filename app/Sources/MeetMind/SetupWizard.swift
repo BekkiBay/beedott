@@ -386,10 +386,10 @@ private struct SpeechStepView: View {
             if let warning = model.diskWarning {
                 Text(warning).font(.system(size: 12)).foregroundStyle(Theme.orange(scheme))
             }
-            if !model.speechReady {
+            if !model.speechReady && model.runtimePhase != .running && model.modelPhase != .running {
                 Button(isFailed ? "Повторить" : "Установить") { model.installSpeech() }
+                    .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(model.runtimePhase == .running || model.modelPhase == .running)
             }
         }
     }
