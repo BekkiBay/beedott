@@ -263,7 +263,7 @@ struct DropdownView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
-                    Text("Демон недоступен")
+                    Text(model.runtimeNote ?? "Демон недоступен")
                         .font(.system(size: 11))
                 }
                 .foregroundStyle(Theme.orange(scheme))
@@ -273,6 +273,10 @@ struct DropdownView: View {
                     .font(.system(size: 13))
             }
             Spacer()
+            Button("Настройка…") { model.openSetup() }
+                .buttonStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary(scheme))
             Button("Выйти") { model.quit() }
                 .buttonStyle(.plain)
                 .font(.system(size: 13))

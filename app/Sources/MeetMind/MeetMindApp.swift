@@ -48,6 +48,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var daemonHealthy: Bool = false
     @Published private(set) var busy: Bool = false
     @Published private(set) var lastErrorText: String? = nil
+    /// Состояние рантайма для футера дропдауна: «Нужна настройка», «Обновляю компоненты…».
+    @Published private(set) var runtimeNote: String? = nil
+    /// Задачи, которые реально идут или ждут очереди (pending/queued/running).
+    /// queueCount считает и failed/failed_retry/skipped — по нему отложенный
+    /// рестарт мог не наступить никогда.
+    @Published private(set) var activeJobs: Int = 0
+    static let setupCompletedKey = "setupCompleted"
+    private var pendingDaemonRestart = false
 
     // --- данные для DropdownView / Библиотеки (экраны 02, 05-06)
     @Published private(set) var recordingTitle: String? = nil
@@ -99,6 +107,13 @@ final class AppModel: ObservableObject {
         guard !started else { return }
         started = true
 
+        // Из Загрузок macOS запускает read-only копию — ставить рантайм и
+        // регистрировать автозапуск на неё нельзя.
+        if RuntimeLogic.isTranslocated(Bundle.main.bundlePath) {
+            SetupWindow.showMoveToApplications()
+            return
+        }
+
         // Следим за состоянием супервизора (heartbeat down/restarting) — влияет на иконку,
         // даже если статус-поллинг ещё не подтвердил недоступность.
         supervisorObserver = NotificationCenter.default.addObserver(
@@ -119,17 +134,73 @@ final class AppModel: ObservableObject {
         LoginItem.enableOnFirstLaunch()
         refreshLoginItem()
         island = IslandController(model: self)
+        checkSetupOnLaunch()
     }
 
     private func handleSupervisorState(_ state: DaemonSupervisor.RunState) {
         switch state {
         case .healthy:
-            break // статус-поллинг (3с) сам подтвердит через daemonHealthy
+            runtimeNote = nil // статус-поллинг (3с) сам подтвердит через daemonHealthy
+        case .notInstalled:
+            runtimeNote = "Нужна настройка"
+            daemonHealthy = false
+            updateStatusLine()
+            refreshIcon()
+        case .updating:
+            runtimeNote = "Обновляю компоненты…"
+            daemonHealthy = false
+            updateStatusLine()
+            refreshIcon()
+        case .updateFailed:
+            runtimeNote = "Компоненты не обновились — см. setup.log"
+            daemonHealthy = false
+            updateStatusLine()
+            refreshIcon()
         case .down, .restarting, .unknown:
             daemonHealthy = false
             refreshIcon()
             updateStatusLine()
         }
+    }
+
+    // MARK: - первичная настройка (SetupWizard.swift)
+
+    /// Мастер открывается сам, если без него BeeDott не работает: нет рантайма или
+    /// модели, либо настройка не пройдена и саммари не настроено. На уже
+    /// настроенном Mac — молча отмечаем настройку пройденной.
+    private func checkSetupOnLaunch() {
+        let runtime = RuntimeManager.shared
+        // Рантайм есть, но обновляется (uv sync в супервизоре) — не мешаем.
+        guard !runtime.needsSync || !runtime.hasRuntime else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            var status: SetupStatus?
+            if runtime.hasRuntime, case .ok(let r) = runtime.runSetup("status") { status = SetupStatus(r) }
+            Task { @MainActor in
+                let completed = UserDefaults.standard.bool(forKey: AppModel.setupCompletedKey)
+                let needed = status.map { !$0.model || (!completed && $0.summary == nil) } ?? true
+                if needed {
+                    SetupWindow.show(status: status)
+                } else if !completed {
+                    UserDefaults.standard.set(true, forKey: AppModel.setupCompletedKey)
+                }
+            }
+        }
+    }
+
+    /// «Настройка…» в дропдауне.
+    func openSetup() {
+        let runtime = RuntimeManager.shared
+        DispatchQueue.global(qos: .userInitiated).async {
+            var status: SetupStatus?
+            if runtime.hasRuntime, case .ok(let r) = runtime.runSetup("status") { status = SetupStatus(r) }
+            Task { @MainActor in SetupWindow.show(status: status) }
+        }
+    }
+
+    /// Мастер сохранил ключ/Telegram во время записи или обработки — демон
+    /// перезапустим, когда всё закончится (см. статус-поллинг).
+    func restartDaemonWhenIdle() {
+        pendingDaemonRestart = true
     }
 
     private func registerHotKeys() {
@@ -229,6 +300,9 @@ final class AppModel: ObservableObject {
                     .flatMap { ISO8601DateFormatter().date(from: $0) }
                 let queueRows = (result["queue"] as? [[String: Any]]) ?? []
                 let queueTotal = queueRows.reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
+                let activeTotal = queueRows
+                    .filter { ["pending", "queued", "running"].contains($0["status"] as? String ?? "") }
+                    .reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
                 let lastError = result["last_error"] as? [String: Any]
                 let errText = lastError.flatMap { $0["last_error"] as? String }
                 // Свежий список встреч тем же заходом (дропдаун: последние 3 +
@@ -251,12 +325,17 @@ final class AppModel: ObservableObject {
                     self.recordingTitle = recTitle
                     self.recordingStartedAt = recStarted
                     self.queueCount = queueTotal
+                    self.activeJobs = activeTotal
                     self.daemonHealthy = true
                     self.lastErrorText = errText
                     self.recentMeetings = meetings
                     self.problemCount = meetings.filter { $0.status == "error" }.count
                     self.updateStatusLine()
                     self.refreshIcon()
+                    if self.pendingDaemonRestart && recordingNow == nil && activeTotal == 0 {
+                        self.pendingDaemonRestart = false
+                        self.supervisor.restart()
+                    }
                 }
             } catch {
                 Task { @MainActor in
@@ -647,6 +726,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             AppModel.shared.finishRecordingBeforeExit()
             AppModel.shared.supervisor.terminateOnQuit()
+            RuntimeManager.shared.terminateChildren()
         }
     }
 }

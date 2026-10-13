@@ -1,6 +1,7 @@
 // DaemonSupervisor.swift — Swift владеет жизнью Python-демона (PLAN_v3 Task 3.4).
 //
-// Запускает демон как child Process (dev-режим: uv run python main.py из UserDefaults),
+// Запускает демон как child Process — команду даёт RuntimeManager (dev: uv run python
+// main.py из репо; bundled: python из Application Support/MeetMind/runtime),
 // пишет stdout/stderr в ~/Library/Logs/MeetMind/daemon.log (append), поллит health()
 // каждые 5с. 3 промаха подряд (15с) → terminate(), ждём 5с, kill -9, рестарт с backoff
 // 1,2,4,...60с. Если сокет уже отвечает при старте — демон запущен снаружи, супервизор
@@ -15,6 +16,9 @@ final class DaemonSupervisor: ObservableObject {
         case healthy
         case down(consecutiveMisses: Int)
         case restarting
+        case notInstalled          // bundled-рантайма нет — ждём мастер (runtimeReady)
+        case updating              // uv sync после обновления приложения
+        case updateFailed(String)  // uv sync упал — демон не запущен
     }
 
     static let missesBeforeRestart = 3
@@ -41,41 +45,6 @@ final class DaemonSupervisor: ObservableObject {
     /// Последняя ошибка запуска — чтобы не писать одно и то же в лог каждые 60с.
     private var lastSpawnFailure: String?
 
-    private var daemonCommand: [String]? {
-        if let saved = UserDefaults.standard.array(forKey: "daemonCommand") as? [String],
-           !saved.isEmpty {
-            return saved
-        }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = ["/opt/homebrew/bin/uv", "/usr/local/bin/uv",
-                          "\(home)/.local/bin/uv", "\(home)/.cargo/bin/uv"]
-        guard let uv = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
-        else { return nil }
-        return [uv, "run", "python", "main.py"]
-    }
-
-    /// Каталог репозитория с main.py (аудит T2: путь больше не зашит в код —
-    /// после переезда репо демон не стартовал). Порядок: UserDefaults repoPath →
-    /// env MEETMIND_REPO → dev-сборка `<repo>/app/build/MeetMind.app`.
-    private var repoPath: String? {
-        let fm = FileManager.default
-        func isRepo(_ path: String) -> Bool {
-            fm.fileExists(atPath: (path as NSString).appendingPathComponent("main.py"))
-        }
-        if let saved = UserDefaults.standard.string(forKey: "repoPath"), isRepo(saved) {
-            return saved
-        }
-        if let env = ProcessInfo.processInfo.environment["MEETMIND_REPO"], isRepo(env) {
-            return env
-        }
-        let derived = Bundle.main.bundleURL
-            .deletingLastPathComponent()  // build/
-            .deletingLastPathComponent()  // app/
-            .deletingLastPathComponent()  // <repo>/
-            .path
-        return isRepo(derived) ? derived : nil
-    }
-
     init() {
         let logsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/MeetMind")
@@ -98,10 +67,50 @@ final class DaemonSupervisor: ObservableObject {
         if (try? ControlClient.health()) != nil {
             log("health() ok на старте — демон уже запущен снаружи, супервизор только поллит")
             setState(.healthy)
-        } else {
-            spawnProcess()
+            startPolling()
+            return
         }
+        let runtime = RuntimeManager.shared
+        guard runtime.hasRuntime else {
+            log("рантайм не установлен — жду мастер первичной настройки")
+            setState(.notInstalled)
+            return
+        }
+        if runtime.needsSync {
+            log("uv.lock приложения изменился — обновляю компоненты")
+            setState(.updating)
+            if let failure = runtime.syncRuntime(onLine: { _ in }) {
+                log("обновление компонентов не удалось: \(failure)")
+                setState(.updateFailed(failure))
+                return
+            }
+        }
+        spawnProcess()
         startPolling()
+    }
+
+    /// Мастер поставил рантайм — запустить демон, если ещё не запущен.
+    func runtimeReady() {
+        workQueue.async { [weak self] in
+            guard let self, self.process?.isRunning != true else { return }
+            self.spawnProcess()
+            self.startPolling()
+        }
+    }
+
+    /// Перезапуск, чтобы демон перечитал config.env. false — демон запущен не нами.
+    @discardableResult
+    func restart() -> Bool {
+        guard weSpawned else { return false }
+        workQueue.async { [weak self] in
+            // Рестарт по backoff уже запланирован — новый процесс и так прочитает config.env.
+            guard let self, !self.isRestarting else { return }
+            self.log("перезапуск демона: новые настройки")
+            self.terminateProcessGracefully()
+            self.consecutiveMisses = 0
+            self.spawnProcess()
+        }
+        return true
     }
 
     private func startPolling() {
@@ -171,20 +180,16 @@ final class DaemonSupervisor: ObservableObject {
     }
 
     private func spawnProcess() {
-        guard let repoPath else {
-            spawnFailed("не найден репозиторий MeetMind (нет main.py) — задайте путь: "
-                        + "defaults write com.jvmshid.meetmind repoPath <путь к репо>")
-            return
-        }
-        guard let cmd = daemonCommand else {
-            spawnFailed("не найден uv (/opt/homebrew/bin, /usr/local/bin, ~/.local/bin) — "
-                        + "задайте команду: defaults write com.jvmshid.meetmind daemonCommand -array …")
+        guard let launch = RuntimeManager.shared.daemonLaunch() else {
+            spawnFailed("рантайм демона не установлен — пройди первичную настройку")
+            setState(.notInstalled)
             return
         }
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: cmd[0])
-        p.arguments = Array(cmd.dropFirst())
-        p.currentDirectoryURL = URL(fileURLWithPath: repoPath)
+        p.executableURL = URL(fileURLWithPath: launch.executable)
+        p.arguments = launch.arguments
+        p.currentDirectoryURL = URL(fileURLWithPath: launch.cwd)
+        p.environment = launch.environment
 
         if !FileManager.default.fileExists(atPath: logURL.path) {
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
@@ -200,7 +205,7 @@ final class DaemonSupervisor: ObservableObject {
             process = p
             weSpawned = true
             lastSpawnFailure = nil
-            log("демон запущен: \(cmd.joined(separator: " ")) (cwd=\(repoPath), pid=\(p.processIdentifier))")
+            log("демон запущен: \(([launch.executable] + launch.arguments).joined(separator: " ")) (cwd=\(launch.cwd), pid=\(p.processIdentifier))")
         } catch {
             spawnFailed("не удалось запустить демон: \(error.localizedDescription)")
         }
