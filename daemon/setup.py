@@ -179,6 +179,20 @@ def cmd_check_key(key: str) -> dict:
     return {}
 
 
+def cmd_link_ffmpeg() -> dict:
+    """runtime/bin/ffmpeg → статический ffmpeg из imageio-ffmpeg: mlx-whisper и
+    reconcile зовут его по имени, а на чистом Mac Homebrew нет."""
+    import imageio_ffmpeg
+    exe = imageio_ffmpeg.get_ffmpeg_exe()
+    bin_dir = app_dir() / "runtime" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    link = bin_dir / "ffmpeg"
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(exe)
+    return {"ffmpeg": str(link)}
+
+
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 TELEGRAM_HELLO = "BeeDott подключён ✓ Сюда будут приходить фоллоу-апы встреч."
 CONNECT_WAIT_SEC = 120
@@ -241,6 +255,7 @@ def cmd_telegram_connect(token: str) -> dict:
 COMMANDS = {
     "status": cmd_status,
     "install-model": cmd_install_model,
+    "link-ffmpeg": cmd_link_ffmpeg,
     "check-key": cmd_check_key,
     "telegram-check": cmd_telegram_check,
     "telegram-connect": cmd_telegram_connect,

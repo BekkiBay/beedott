@@ -327,3 +327,31 @@ def test_install_model_no_network(appdir, capsys, monkeypatch, tmp_path):
     monkeypatch.setattr(huggingface_hub, "HfApi", Api)
     setup.main(["install-model"])
     assert events(capsys)[-1]["code"] == "no_network"
+
+
+def test_link_ffmpeg(appdir, capsys, monkeypatch, tmp_path):
+    import imageio_ffmpeg
+    exe = tmp_path / "ffmpeg-macos-aarch64"
+    exe.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(imageio_ffmpeg, "get_ffmpeg_exe", lambda: str(exe))
+    assert setup.main(["link-ffmpeg"]) == 0
+    link = appdir / "runtime" / "bin" / "ffmpeg"
+    assert link.is_symlink() and link.resolve() == exe.resolve()
+    assert setup.main(["link-ffmpeg"]) == 0  # повтор не падает
+    assert events(capsys)[-1] == {"event": "ok", "ffmpeg": str(link)}
+
+
+@pytest.mark.slow
+def test_imageio_ffmpeg_has_what_daemon_uses():
+    """stages.py/transcriber.py/reconcile.py: flac, channelsplit, -ignore_length."""
+    import subprocess
+
+    import imageio_ffmpeg
+    exe = imageio_ffmpeg.get_ffmpeg_exe()
+
+    def out(*args):
+        return subprocess.run([exe, "-hide_banner", *args], capture_output=True, text=True).stdout
+
+    assert " flac " in out("-encoders")
+    assert "channelsplit" in out("-filters")
+    assert "ignore_length" in out("-h", "demuxer=wav")
