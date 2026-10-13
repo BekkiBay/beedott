@@ -158,3 +158,88 @@ def test_check_key_no_network(appdir, capsys, monkeypatch):
 def test_check_key_empty(appdir, capsys, monkeypatch):
     assert run_with_stdin(monkeypatch, ["check-key"], "") == 1
     assert events(capsys)[-1]["code"] == "invalid_key"
+
+
+class FakeTelegram:
+    """Подмена requests.post для Bot API: очередь ответов по методу."""
+
+    def __init__(self, responses):
+        self.responses = responses  # {method: [(status, json), ...]}
+        self.calls = []
+
+    def post(self, url, json=None, timeout=None):
+        method = url.rsplit("/", 1)[-1]
+        self.calls.append((method, json or {}))
+        status, body = self.responses[method].pop(0)
+
+        class R:
+            status_code = status
+
+            def json(self_inner):
+                return body
+        return R()
+
+
+def fake_tg(monkeypatch, responses):
+    import requests
+    tg = FakeTelegram(responses)
+    monkeypatch.setattr(requests, "post", tg.post)
+    return tg
+
+
+def test_telegram_check_ok(appdir, capsys, monkeypatch):
+    fake_tg(monkeypatch, {"getMe": [(200, {"ok": True, "result": {"username": "my_bot"}})]})
+    assert run_with_stdin(monkeypatch, ["telegram-check"], "1:abc") == 0
+    assert events(capsys)[-1] == {"event": "ok", "bot": "my_bot"}
+
+
+def test_telegram_check_bad_token(appdir, capsys, monkeypatch):
+    fake_tg(monkeypatch, {"getMe": [(401, {"ok": False, "description": "Unauthorized"})]})
+    run_with_stdin(monkeypatch, ["telegram-check"], "1:abc")
+    assert events(capsys)[-1]["code"] == "invalid_token"
+
+
+def test_telegram_network_error_hides_token(appdir, capsys, monkeypatch):
+    import requests
+
+    def boom(url, json=None, timeout=None):
+        raise requests.ConnectionError(f"Max retries exceeded with url: {url}")
+    monkeypatch.setattr(requests, "post", boom)
+    run_with_stdin(monkeypatch, ["telegram-check"], "1:secret")
+    ev = events(capsys)[-1]
+    assert ev["code"] == "no_network"
+    assert "1:secret" not in ev["message"]
+
+
+def test_telegram_connect_waits_for_start(appdir, capsys, monkeypatch):
+    start = {"update_id": 7, "message": {"text": "/start", "chat": {"id": 555}}}
+    other = {"update_id": 6, "message": {"text": "привет", "chat": {"id": 1}}}
+    tg = fake_tg(monkeypatch, {
+        "getUpdates": [(200, {"ok": True, "result": []}),
+                       (200, {"ok": True, "result": [other, start]}),
+                       (200, {"ok": True, "result": []})],
+        "sendMessage": [(200, {"ok": True, "result": {}})],
+    })
+    assert run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc") == 0
+    assert events(capsys)[-1] == {"event": "ok", "chat_id": 555}
+    ack = [p for m, p in tg.calls if m == "getUpdates"][-1]
+    assert ack["offset"] == 8
+    assert ("sendMessage", {"chat_id": 555, "text": setup.TELEGRAM_HELLO}) in tg.calls
+    text = (appdir / "config.env").read_text()
+    assert "TELEGRAM_BOT_TOKEN=1:abc" in text and "TELEGRAM_CHAT_ID=555" in text
+
+
+def test_telegram_connect_timeout(appdir, capsys, monkeypatch):
+    import itertools
+    # deadline, проверка цикла, расчёт wait — 0; дальше время вышло.
+    clock = itertools.chain([0, 0, 0], itertools.repeat(200))
+    monkeypatch.setattr(setup.time, "monotonic", lambda: next(clock))
+    fake_tg(monkeypatch, {"getUpdates": [(200, {"ok": True, "result": []})]})
+    run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc")
+    assert events(capsys)[-1]["code"] == "timeout"
+
+
+def test_telegram_connect_bot_busy(appdir, capsys, monkeypatch):
+    fake_tg(monkeypatch, {"getUpdates": [(409, {"ok": False, "description": "Conflict: webhook"})]})
+    run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc")
+    assert events(capsys)[-1]["code"] == "bot_busy"

@@ -15,6 +15,7 @@ import errno
 import json
 import os
 import sys
+import time
 
 # hf-xet обновляет tqdm-бар один раз в конце загрузки — прогресса в мастере не
 # было бы. По HTTP бар растёт шагами по 10 МБ. Должно стоять до импорта
@@ -110,12 +111,73 @@ def cmd_check_key(key: str) -> dict:
     return {}
 
 
+TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
+TELEGRAM_HELLO = "BeeDott подключён ✓ Сюда будут приходить фоллоу-апы встреч."
+CONNECT_WAIT_SEC = 120
+LONG_POLL_SEC = 50  # Telegram держит getUpdates не дольше ~50 с
+
+
+def _tg(token: str, method: str, params: dict | None = None, http_timeout: float = 15):
+    """Вызов Bot API. Токен в URL — вычищаем его из любых текстов ошибок."""
+    import requests
+    url = TELEGRAM_API.format(token=token, method=method)
+    try:
+        resp = requests.post(url, json=params or {}, timeout=http_timeout)
+    except requests.RequestException as exc:
+        raise SetupError("no_network", _last_line(exc).replace(token, "<токен>")) from exc
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise SetupError("internal", f"Telegram ответил {resp.status_code}") from exc
+    description = str(data.get("description", "")).replace(token, "<токен>")
+    if resp.status_code in (401, 404):
+        raise SetupError("invalid_token", description or "токен не подходит")
+    if resp.status_code == 409:
+        raise SetupError("bot_busy", description)
+    if not data.get("ok"):
+        raise SetupError("internal", description or f"Telegram ответил {resp.status_code}")
+    return data["result"]
+
+
+def cmd_telegram_check(token: str) -> dict:
+    if not token:
+        raise SetupError("invalid_token", "пустой токен")
+    return {"bot": _tg(token, "getMe")["username"]}
+
+
+def cmd_telegram_connect(token: str) -> dict:
+    """Ждём /start от пользователя, запоминаем его чат, шлём тестовое сообщение."""
+    if not token:
+        raise SetupError("invalid_token", "пустой токен")
+    deadline = time.monotonic() + CONNECT_WAIT_SEC
+    offset = None
+    while time.monotonic() < deadline:
+        wait = max(1, min(LONG_POLL_SEC, int(deadline - time.monotonic())))
+        params = {"timeout": wait, "allowed_updates": ["message"]}
+        if offset is not None:
+            params["offset"] = offset
+        for update in _tg(token, "getUpdates", params, http_timeout=wait + 10):
+            offset = update["update_id"] + 1
+            message = update.get("message") or {}
+            if (message.get("text") or "").strip().startswith("/start"):
+                chat_id = message["chat"]["id"]
+                _tg(token, "getUpdates", {"offset": offset, "timeout": 0})  # подтвердить
+                _tg(token, "sendMessage", {"chat_id": chat_id, "text": TELEGRAM_HELLO})
+                import config
+                config.update_config_env("TELEGRAM_BOT_TOKEN", token)
+                config.update_config_env("TELEGRAM_CHAT_ID", str(chat_id))
+                return {"chat_id": chat_id}
+    raise SetupError("timeout", "не дождались /start")
+
+
 COMMANDS = {
     "status": cmd_status,
     "check-key": cmd_check_key,
+    "telegram-check": cmd_telegram_check,
+    "telegram-connect": cmd_telegram_connect,
 }
 # Команды, которым нужен секрет из stdin (первая строка).
-SECRET_COMMANDS = {"check-key"}
+SECRET_COMMANDS = {"check-key", "telegram-check", "telegram-connect"}
 
 
 def main(argv: list[str] | None = None) -> int:
