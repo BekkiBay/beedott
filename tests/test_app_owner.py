@@ -46,7 +46,7 @@ class _FakeRecorder:
     def start(self):
         self.started = True
         self.out_path.parent.mkdir(parents=True, exist_ok=True)
-        self.out_path.write_bytes(b"RIFF....WAVEfake")
+        _write_wav(self.out_path, seconds=2)
 
     def stop(self):
         self.stopped = True
@@ -62,6 +62,14 @@ def app(tmp_path, monkeypatch):
 
 def _session_row(app, sid):
     return db.get_session(app._con, sid)
+
+
+def _write_wav(path, *, seconds: float, rate: int = 48000):
+    import numpy as np
+    import soundfile as sf
+    frames = int(rate * seconds)
+    samples = (np.random.default_rng(0).standard_normal((frames, 2)) * 3000).astype("int16")
+    sf.write(str(path), samples, rate, subtype="PCM_16")
 
 
 # --------------------------------------------------------------- owner=app ---
@@ -109,10 +117,9 @@ def test_stop_recording_owner_app_finalizes_without_recorder(app, monkeypatch):
     sid = started["session_id"]
 
     # Swift CaptureEngine уже дописал WAV и сам его закрыл до stop_recording —
-    # для теста кладём непустой файл по audio_path, чтобы имитировать это.
-    audio_path = started["audio_path"]
-    from pathlib import Path
-    Path(audio_path).write_bytes(b"RIFF....WAVEfake-app-audio")
+    # для теста кладём настоящий WAV по audio_path, чтобы имитировать это
+    # (пустой/битый файл stop теперь отменяет, см. тесты T3 ниже).
+    _write_wav(started["audio_path"], seconds=1)
 
     result = app.stop_recording({})
     assert result == {"session_id": sid}
@@ -200,3 +207,177 @@ def test_cancel_recording_owner_daemon_calls_recorder_stop(app, monkeypatch):
 
     row = _session_row(app, sid)
     assert row["state"] == State.CANCELLED
+
+
+# ───────── аудит T3: владелец записи переживает рестарт демона ───────────────
+
+
+@pytest.fixture()
+def notes(monkeypatch):
+    sent = []
+    monkeypatch.setattr("daemon.app.notify", lambda title, msg, *a, **k: sent.append(msg))
+    return sent
+
+
+def test_start_owner_app_persists_owner_in_db(app, monkeypatch):
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    sid = app.start_recording({"audio_path_owner": "app"})["session_id"]
+    assert _session_row(app, sid)["audio_owner"] == "app"
+
+
+def test_restarted_daemon_adopts_live_app_recording(app, monkeypatch, notes):
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    started = app.start_recording({"audio_path_owner": "app"})
+    sid = started["session_id"]
+    _write_wav(started["audio_path"], seconds=1)
+
+    restarted = DaemonApp()  # демон упал и поднялся, Swift продолжает писать
+    restarted.startup(db.connect())
+
+    st = restarted.status({})
+    assert st["recording"] == sid
+    assert st["recording_owner"] == "app"
+    assert restarted.stop_recording({}) == {"session_id": sid}
+    assert db.get_session(restarted._con, sid)["state"] == State.RECORDED
+
+
+def test_stop_owner_app_with_empty_wav_cancels_session(app, monkeypatch, notes):
+    import numpy as np
+    import soundfile as sf
+    from daemon.paths import session_dir
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    started = app.start_recording({"audio_path_owner": "app"})
+    sid = started["session_id"]
+    sf.write(started["audio_path"], np.zeros((0, 2), dtype="int16"), 48000)
+    sdir = session_dir(sid)  # session_dir() создаёт каталог — берём путь до стопа
+
+    result = app.stop_recording({})
+
+    assert result == {"session_id": sid, "cancelled": "empty"}
+    assert _session_row(app, sid)["state"] == State.CANCELLED
+    assert not sdir.exists()
+    assert app._active_sid is None
+    assert any("пуст" in m for m in notes)
+
+
+def test_stop_owner_app_repairs_unfinalized_wav_header(app, monkeypatch, notes):
+    """Swift упал, не закрыв AVAudioFile: в заголовке нули вместо размеров.
+    stop (или финализация брошенной записи) чинит заголовок, а не отменяет."""
+    import struct
+    import soundfile as sf
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    started = app.start_recording({"audio_path_owner": "app"})
+    sid = started["session_id"]
+    wav = started["audio_path"]
+    _write_wav(wav, seconds=1)
+    from pathlib import Path
+    raw = bytearray(Path(wav).read_bytes())
+    struct.pack_into("<I", raw, 4, 0)
+    struct.pack_into("<I", raw, 40, 0)
+    Path(wav).write_bytes(bytes(raw))
+
+    assert app.stop_recording({}) == {"session_id": sid}
+    assert _session_row(app, sid)["state"] == State.RECORDED
+    assert sf.info(wav).frames == 48000
+
+
+# ───────── аудит T7: предохранители для записи Swift (owner=app) ─────────────
+
+
+def _quiet_guard(**kw):
+    from daemon.app_guard import AppRecordingGuard
+    defaults = dict(max_sec=6 * 3600, min_disk_stop_mb=500, silence_min=30,
+                    disk_free=lambda p: 10**12, tail_rms=lambda p, s: None)
+    defaults.update(kw)
+    return AppRecordingGuard(**defaults)
+
+
+def test_guard_tick_requests_stop_once_on_duration_limit(app, monkeypatch, notes):
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    started = app.start_recording({"audio_path_owner": "app"})
+    _write_wav(started["audio_path"], seconds=1)
+    app._guard = _quiet_guard(max_sec=0)
+
+    app.guard_tick()
+    app.guard_tick()
+
+    assert app.status({})["stop_requested"] == "duration_limit"
+    assert len([m for m in notes if "длительност" in m]) == 1
+    assert app._active_sid == started["session_id"]  # останавливает Swift, не демон
+
+
+def test_guard_tick_finalizes_recording_when_app_is_gone(app, monkeypatch, notes):
+    import os
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    started = app.start_recording({"audio_path_owner": "app"})
+    sid = started["session_id"]
+    _write_wav(started["audio_path"], seconds=1)
+    os.utime(started["audio_path"], (0, 0))  # файл давно не меняется — Swift мёртв
+    app._guard = _quiet_guard(stale_sec=60)
+
+    app.guard_tick()
+
+    row = _session_row(app, sid)
+    assert row["state"] == State.RECORDED
+    assert row["gap_note"]
+    assert app._active_sid is None
+    assert app.status({})["stop_requested"] is None
+
+
+# ───────── продукт P6: случайная короткая запись отменяется сама ─────────────
+
+
+def test_stop_owner_app_shorter_than_min_cancels(app, monkeypatch, notes):
+    monkeypatch.setenv("MEETMIND_MIN_RECORDING_SEC", "10")
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    started = app.start_recording({"audio_path_owner": "app"})
+    sid = started["session_id"]
+    _write_wav(started["audio_path"], seconds=3)
+
+    assert app.stop_recording({}) == {"session_id": sid, "cancelled": "too_short"}
+    assert _session_row(app, sid)["state"] == State.CANCELLED
+    assert any("короче 10" in m for m in notes)
+
+
+def test_stop_owner_daemon_shorter_than_min_cancels(app, monkeypatch, notes):
+    monkeypatch.setenv("MEETMIND_MIN_RECORDING_SEC", "10")
+    monkeypatch.setattr("daemon.app.Recorder", _FakeRecorder)
+    sid = app.start_recording({"audio_path_owner": "daemon"})["session_id"]
+
+    assert app.stop_recording({}) == {"session_id": sid, "cancelled": "too_short"}
+    assert _session_row(app, sid)["state"] == State.CANCELLED
+
+
+def test_stop_long_enough_recording_is_processed(app, monkeypatch, notes):
+    monkeypatch.setenv("MEETMIND_MIN_RECORDING_SEC", "10")
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    started = app.start_recording({"audio_path_owner": "app"})
+    _write_wav(started["audio_path"], seconds=11, rate=8000)
+    assert app.stop_recording({}) == {"session_id": started["session_id"]}
+
+
+def test_notifications_pop_handler_and_session_link(app, monkeypatch):
+    """Уведомление предохранителя несёт session_id — клик в приложении
+    открывает карточку этой встречи (продукт P16)."""
+    from daemon import notifier
+    monkeypatch.setattr("daemon.app.Recorder", _BoomRecorder)
+    started = app.start_recording({"audio_path_owner": "app"})
+    _write_wav(started["audio_path"], seconds=1)
+    app._guard = _quiet_guard(max_sec=0)
+    assert app.notifications_pop({}) == {"notifications": []}
+
+    app.guard_tick()
+
+    items = app.notifications_pop({})["notifications"]
+    assert items and items[0]["session_id"] == started["session_id"]
+    assert notifier.pop_for_app() == []
+
+
+def test_logging_hides_telegram_token_in_http_logs():
+    """httpx пишет на INFO полный URL, а в URL Telegram Bot API — токен бота
+    (2026-10-12: токен лежал открытым текстом в daemon.log)."""
+    import logging
+    from daemon.app import _configure_logging
+    _configure_logging()
+    for name in ("httpx", "httpx2"):
+        assert not logging.getLogger(name).isEnabledFor(logging.INFO)

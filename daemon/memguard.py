@@ -3,11 +3,9 @@ import os
 
 import psutil
 
-# summarize: ~5GB весов Vikhr-8B Q4 + KV-cache при num_ctx=16384 + запас.
-# Цифры — стартовые: в M2 Verify замерить реальный пик RSS ollama и скорректировать.
-# Override: MEETMIND_MEMGUARD_GB_SUMMARIZE=4 (аналогично _TRANSCRIBE/_DIARIZE) —
-# ollama может быть уже резидентна, тогда порог завышен.
-_DEFAULT_GB = {"transcribe": 4, "summarize": 10, "diarize": 2}
+# summarize в списке нет: саммари делает Claude в облаке, локальной памяти не ест.
+# Override: MEETMIND_MEMGUARD_GB_TRANSCRIBE=6 (аналогично _DIARIZE).
+_DEFAULT_GB = {"transcribe": 4, "diarize": 2}
 
 
 def _required(stage: str) -> int:

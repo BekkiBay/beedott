@@ -1,12 +1,12 @@
 """
 Рендер JSON-фоллоу-апа (схема SPEC_v3 §7) в markdown для sinks.
 
-Формат — перенос v2 `USER_PROMPT_TEMPLATE` (daemon/summarizer.py v2): Контекст /
-Что обсуждалось / Договорённости / Action items (`📅 дедлайн — что — кто`) /
-Открытые вопросы, плюс подпись движка (`🖥 vikhr-8b` / `☁️ claude sonnet`, SPEC §7)
-и дисклеймер о локальном хранении (перенос daemon/sinks/base.py:62-63).
+Разделы: Коротко / Что обсуждалось / Договорённости / Задачи (`• что — кто, до
+пт, 16.10`) / Открытые вопросы — пустые не показываются (правка 2026-10-12:
+заметку должно хотеться читать). Плюс подпись движка (`☁️ claude-code:opus`,
+SPEC §7) и дисклеймер о локальном хранении (перенос daemon/sinks/base.py:62-63).
 """
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 # Перенос дословно из daemon/sinks/base.py:62-63.
@@ -21,21 +21,34 @@ def _engine_signature(engine: str) -> str:
     return f"{icon} {engine}"
 
 
+_WEEKDAYS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+
+
 def _bullets(items: list[str]) -> str:
-    if not items:
-        return "нет"
     return "\n".join(f"• {item}" for item in items)
 
 
+def _human_deadline(deadline: Optional[str]) -> str:
+    """«2026-10-16» → «до пт, 16.10»; «asap» → «срочно»; свободный текст — как
+    есть. Продукт P9: без срока — пусто, а не ложная срочность."""
+    text = (deadline or "").strip()
+    if not text:
+        return ""
+    if text.lower() == "asap":
+        return "срочно"
+    try:
+        d = date.fromisoformat(text)
+    except ValueError:
+        return text
+    return f"до {_WEEKDAYS[d.weekday()]}, {d:%d.%m}"
+
+
 def _action_items_block(items: list[dict]) -> str:
-    if not items:
-        return "нет"
     lines = []
     for it in items:
-        deadline = it.get("deadline") or "asap"
-        task = it.get("task", "")
-        owner = it.get("owner", "")
-        lines.append(f"📅 {deadline} — {task} — {owner}")
+        owner = it.get("owner") or "не назначен"
+        deadline = _human_deadline(it.get("deadline"))
+        lines.append(f"• {it.get('task', '')} — {owner}" + (f", {deadline}" if deadline else ""))
     return "\n".join(lines)
 
 
@@ -45,6 +58,7 @@ def render_followup(
     title: str,
     duration_min: float,
     when: Optional[datetime] = None,
+    revision: int = 1,
 ) -> str:
     """Собрать markdown-заметку из JSON-фоллоу-апа (SPEC_v3 §7).
 
@@ -63,6 +77,9 @@ def render_followup(
     header += f" ({duration_min} мин)"
 
     parts: list[str] = [header, ""]
+    if revision > 1:
+        # Продукт P12: пересобранное саммари не должно выглядеть как дубль.
+        parts = [f"🔄 Обновлённая версия фоллоу-апа (№{revision})", ""] + parts
 
     if followup.get("degraded"):
         parts.append(
@@ -71,24 +88,15 @@ def render_followup(
         )
         parts.append("")
 
-    parts += [
-        "**Контекст**",
-        (followup.get("context") or "").strip() or "нет",
-        "",
-        "**Что обсуждалось**",
-        _bullets(followup.get("discussed") or []),
-        "",
-        "**Договорённости**",
-        _bullets(followup.get("decisions") or []),
-        "",
-        "**Action items**",
-        _action_items_block(followup.get("action_items") or []),
-        "",
-        "**Открытые вопросы**",
-        _bullets(followup.get("open_questions") or []),
-        "",
-        "---",
-        _engine_signature(engine),
-        DISCLAIMER,
+    parts += ["**Коротко**", (followup.get("context") or "").strip() or "нет", ""]
+    sections = [
+        ("Что обсуждалось", _bullets(followup.get("discussed") or [])),
+        ("Договорённости", _bullets(followup.get("decisions") or [])),
+        ("Задачи", _action_items_block(followup.get("action_items") or [])),
+        ("Открытые вопросы", _bullets(followup.get("open_questions") or [])),
     ]
+    for heading, body in sections:
+        if body:
+            parts += [f"**{heading}**", body, ""]
+    parts += ["---", _engine_signature(engine), DISCLAIMER]
     return "\n".join(parts)

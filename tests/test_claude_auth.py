@@ -24,10 +24,38 @@ def test_claude_bin_which_fallback(monkeypatch):
         assert claude_auth.claude_bin() == "/usr/local/bin/claude"
 
 
-def test_claude_bin_missing(monkeypatch):
+def test_claude_bin_missing(monkeypatch, tmp_path):
     monkeypatch.delenv("MEETMIND_CLAUDE_BIN", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))  # пустой дом: типовых установок нет
     with patch("daemon.claude_auth.shutil.which", return_value=None):
         assert claude_auth.claude_bin() is None
+
+
+def _fake_bin(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_claude_bin_finds_newest_nvm_install_outside_path(monkeypatch, tmp_path):
+    """Демон из .app получает урезанный PATH без nvm (2026-10-12: саммари трёх
+    встреч встали — claude стоял в ~/.nvm/versions/node/v26.1.0/bin)."""
+    monkeypatch.delenv("MEETMIND_CLAUDE_BIN", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    nvm = tmp_path / ".nvm" / "versions" / "node"
+    _fake_bin(nvm / "v9.11.2" / "bin" / "claude")
+    newest = _fake_bin(nvm / "v26.1.0" / "bin" / "claude")
+    with patch("daemon.claude_auth.shutil.which", return_value=None):
+        assert claude_auth.claude_bin() == str(newest)
+
+
+def test_claude_bin_finds_native_installer_location(monkeypatch, tmp_path):
+    monkeypatch.delenv("MEETMIND_CLAUDE_BIN", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    native = _fake_bin(tmp_path / ".local" / "bin" / "claude")
+    with patch("daemon.claude_auth.shutil.which", return_value=None):
+        assert claude_auth.claude_bin() == str(native)
 
 
 # ─────────────────────────────── claude_env ──────────────────────────────────

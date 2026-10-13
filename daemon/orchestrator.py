@@ -7,7 +7,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-import config
 from daemon import db, memguard
 from daemon.states import State
 
@@ -33,6 +32,12 @@ CHAIN: dict[str, tuple[State, State, Optional[str]]] = {
 }
 
 MAX_ATTEMPTS = 8
+
+
+class PermanentStageError(RuntimeError):
+    """Сбой стадии, который ретрай не исправит (например, в записи нет речи).
+    Джоба сразу failed, сессия FAILED, одно уведомление — вместо 8 попыток за
+    ~3 часа (продукт P6)."""
 
 
 class Orchestrator:
@@ -96,10 +101,7 @@ class Orchestrator:
         session = db.get_session(self.con, sid)
 
         try:
-            # summarize при включённом Claude гвардится внутри самой стадии
-            # (stages.summarize): мало RAM → фоллбек на Claude, а не блок стадии.
-            if not (stage == "summarize" and config.USE_CLAUDE_CODE):
-                memguard.require(stage)
+            memguard.require(stage)
             fn = self.stages[stage]
             fn(session)
         except Exception as exc:  # noqa: BLE001 — любой сбой стадии = failed_retry
@@ -176,7 +178,7 @@ class Orchestrator:
             "orchestrator: стадия %s провалилась (session %s, попытка %d/%d): %s",
             stage, sid, attempts, MAX_ATTEMPTS, exc)
 
-        if attempts >= MAX_ATTEMPTS:
+        if attempts >= MAX_ATTEMPTS or isinstance(exc, PermanentStageError):
             self.con.execute(
                 "UPDATE pipeline_jobs SET status='failed', attempts=?, last_error=?,"
                 " next_retry_at=NULL, updated_at=? WHERE id=?",

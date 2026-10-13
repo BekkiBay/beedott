@@ -5,6 +5,7 @@
   python -m daemon.cli record stop | cancel
   python -m daemon.cli status
   python -m daemon.cli reprocess <session_id>
+  python -m daemon.cli import <файл> [--title T]   # импорт готовой записи
   python -m daemon.cli health
 
 Все команды кроме daemon — клиенты control-сокета (SPEC_v3 §6).
@@ -30,6 +31,9 @@ def main(argv: list[str] | None = None) -> None:
     rp = sub.add_parser("reprocess")
     rp.add_argument("session_id")
     sub.add_parser("health")
+    imp = sub.add_parser("import", help="импортировать готовый аудиофайл")
+    imp.add_argument("path")
+    imp.add_argument("--title", default=None)
 
     args = p.parse_args(argv)
 
@@ -44,6 +48,9 @@ def main(argv: list[str] | None = None) -> None:
         out = request(method, params)
     elif args.cmd == "status":
         out = request("status")
+    elif args.cmd == "import":
+        import os
+        out = request("import_audio", {"path": os.path.abspath(args.path), "title": args.title})
     elif args.cmd == "reprocess":
         out = request("reprocess", {"session_id": args.session_id})
     else:

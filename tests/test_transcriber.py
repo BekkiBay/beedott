@@ -140,3 +140,42 @@ def test_transcribe_mono_has_no_speaker_labels(tmp_path, monkeypatch):
 
     segments = Transcriber().transcribe(str(wav))
     assert segments == [{"start": 0.0, "end": 1.0, "text": "моно"}]
+
+
+# ───── продукт P6: ошибки — с причиной, «нет речи» — пустой список, не None ─────
+
+
+def test_transcribe_missing_file_raises_with_reason(tmp_path):
+    import pytest
+    from daemon.transcriber import Transcriber
+    t = Transcriber.__new__(Transcriber)
+    with pytest.raises(FileNotFoundError):
+        t.transcribe(str(tmp_path / "нет.wav"))
+
+
+def test_transcribe_backend_error_propagates(tmp_path, monkeypatch):
+    """Раньше любая ошибка (например, нет ffmpeg) превращалась в None, а в
+    интерфейсе было «'NoneType' object is not iterable»."""
+    import numpy as np
+    import pytest
+    import soundfile as sf
+    from daemon.transcriber import Transcriber
+    wav = tmp_path / "audio.wav"
+    sf.write(str(wav), np.zeros(16000, dtype="float32"), 16000)
+
+    def boom(self, p):
+        raise RuntimeError("ffmpeg not found")
+
+    monkeypatch.setattr(Transcriber, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Transcriber, "_transcribe_one", boom)
+    with pytest.raises(RuntimeError, match="ffmpeg not found"):
+        Transcriber().transcribe(str(wav))
+
+
+def test_transcribe_stereo_without_speech_returns_empty_list(tmp_path, monkeypatch):
+    from daemon.transcriber import Transcriber
+    wav = tmp_path / "audio.wav"
+    _write_stereo_wav(wav)
+    monkeypatch.setattr(Transcriber, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Transcriber, "_transcribe_one", lambda self, p: [])
+    assert Transcriber().transcribe(str(wav)) == []

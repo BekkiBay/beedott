@@ -165,3 +165,35 @@ def test_notify_upcoming_returns_false_when_cancelled(monkeypatch):
 
     assert result is False
     assert session.status == "cancelled"
+
+
+# ───── продукт P16: пока приложение опрашивает демон, уведомления — через него ─
+
+
+def test_notify_goes_to_app_queue_while_app_polls(monkeypatch):
+    from daemon import notifier
+    calls = []
+    monkeypatch.setattr(notifier.subprocess, "run", lambda *a, **k: calls.append(a))
+
+    assert notifier.pop_for_app() == []  # приложение вышло на связь
+    assert notifier.notify("MeetMind", "Встреча обработана", session_id="abc") is True
+
+    assert calls == []  # osascript не звали
+    items = notifier.pop_for_app()
+    assert [(i["title"], i["message"], i["session_id"]) for i in items] == [
+        ("MeetMind", "Встреча обработана", "abc")]
+    assert notifier.pop_for_app() == []  # каждое — ровно один раз
+
+
+def test_notify_falls_back_to_osascript_when_app_is_silent(monkeypatch):
+    from daemon import notifier
+    calls = []
+    monkeypatch.setattr(notifier.subprocess, "run", lambda *a, **k: calls.append(a))
+    now = [1000.0]
+    monkeypatch.setattr(notifier, "_clock", lambda: now[0])
+
+    notifier.pop_for_app()
+    now[0] += notifier.APP_POLL_TTL_SEC + 1  # приложение перестало опрашивать
+    notifier.notify("MeetMind", "текст")
+
+    assert len(calls) == 1

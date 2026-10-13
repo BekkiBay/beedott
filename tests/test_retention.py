@@ -110,3 +110,41 @@ def test_sweep_missing_wav_still_clears_audio_path(tmp_path, monkeypatch):
 
     assert swept == [sid]
     assert db.get_session(con, sid)["audio_path"] is None
+
+
+# ───── продукт P10: срок настраивается, важную запись можно сохранить ─────────
+
+
+def _old_delivered(con, days=20):
+    sid = db.create_session(con, source="manual")
+    wav, _ = _write_session_files(sid)
+    _advance_to_delivered(con, sid, wav=wav, ended_at=_iso_days_ago(days))
+    return sid, wav
+
+
+def test_sweep_skips_sessions_marked_keep_audio(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid, wav = _old_delivered(con)
+    con.execute("UPDATE sessions SET keep_audio=1 WHERE id=?", (sid,))
+    con.commit()
+    assert retention.sweep(con) == []
+    assert wav.exists()
+
+
+def test_sweep_reads_retention_days_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    monkeypatch.setenv("MEETMIND_RETENTION_DAYS", "30")
+    con = db.connect()
+    sid, wav = _old_delivered(con, days=20)
+    assert retention.sweep(con) == []
+    assert wav.exists()
+
+
+def test_sweep_disabled_with_zero_days(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    monkeypatch.setenv("MEETMIND_RETENTION_DAYS", "0")
+    con = db.connect()
+    sid, wav = _old_delivered(con, days=400)
+    assert retention.sweep(con) == []
+    assert wav.exists()

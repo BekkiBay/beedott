@@ -6,27 +6,27 @@ followup.{json,md}. Control-plane: sessions/pipeline_jobs/deliveries в SQLite.
 """
 import json
 import logging
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
+import soundfile as sf
+
 import config
-from daemon import claude_booster, db, memguard
+from daemon import anthropic_api, claude_cli, db
 from daemon.notifier import notify
-from daemon.ollama_client import OllamaDown, OllamaModelMissing
+from daemon.orchestrator import PermanentStageError
 from daemon.paths import session_dir
 from daemon.render import render_followup
 from daemon.sinks import NoteSink, TelegramSink
-from daemon.summarizer import summarize_ollama, validate_followup
-
-# Служебные ключи followup.json вне схемы SPEC_v3 §7 (не проходят валидацию):
-# degraded — флаг fallback-а суммаризатора, engine — движок для UI Библиотеки.
-_SERVICE_KEYS = {"degraded", "engine"}
+from daemon.summarizer import SummaryAuthError
+from daemon.timeutil import to_local
 from daemon.transcriber import Transcriber, dedupe_lines
 
 logger = logging.getLogger(__name__)
 
-# сессии, уже получившие быстрое «Ollama не запущена» (не спамить на каждом ретрае)
-_ollama_notified: set[str] = set()
+# сессии, уже получившие «Claude недоступен» (не спамить на каждом ретрае)
+_auth_notified: set[str] = set()
 
 
 def _duration_min(session) -> int:
@@ -41,8 +41,21 @@ def _duration_min(session) -> int:
 def _title(session) -> str:
     if session["title"]:
         return session["title"]
-    hhmm = session["started_at"][11:16] if session["started_at"] else "??:??"
+    hhmm = to_local(session["started_at"]).strftime("%H:%M") if session["started_at"] else "??:??"
     return f"Встреча {hhmm}"
+
+
+def _attendees(session) -> list[str]:
+    """Участники из календаря (продукт P8), JSON-список в sessions.attendees."""
+    try:
+        raw = session["attendees"]
+    except (IndexError, KeyError):
+        return []
+    try:
+        names = json.loads(raw) if raw else []
+    except (TypeError, ValueError):
+        return []
+    return [n for n in names if isinstance(n, str) and n.strip()]
 
 
 def _segment_line(s: dict) -> str:
@@ -59,70 +72,98 @@ def transcribe(session) -> None:
     text = dedupe_lines("\n".join(
         _segment_line(s) for s in segments if s["text"].strip()))
     if not text.strip():
-        raise RuntimeError("пустой транскрипт — в записи нет распознанной речи")
+        # Ретрай не поможет — сразу FAILED с понятной причиной (продукт P6).
+        raise PermanentStageError("в записи не распознано речи")
     (sdir / "transcript.txt").write_text(text, encoding="utf-8")
     (sdir / "transcript.json").write_text(
         json.dumps(segments, ensure_ascii=False), encoding="utf-8")
     logger.info("transcribe %s: %d сегментов, %d символов",
                 session["id"], len(segments), len(text))
+    _compress_audio(session["id"], session["audio_path"])
+
+
+def _compress_audio(sid: str, audio_path: str | None) -> None:
+    """После транскрипции WAV → FLAC без потерь: ~30% размера (продукт P10:
+    554 MB на час записи → ~170 MB). Исходник удаляется только после сверки
+    числа кадров, каналов и частоты — данные не теряются, поэтому инвариант
+    «удаление только в DELIVERED/CANCELLED» не нарушен. Любой сбой — WAV
+    остаётся, стадия не падает (сжатие — оптимизация, не часть пайплайна)."""
+    if not audio_path or not audio_path.endswith(".wav"):
+        return
+    wav = Path(audio_path)
+    if not wav.exists():
+        return
+    flac = wav.with_suffix(".flac")
+    part = wav.with_name(wav.stem + ".flac.part")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-c:a", "flac", "-f", "flac", str(part)],
+            check=True, capture_output=True)
+        src, dst = sf.info(str(wav)), sf.info(str(part))
+        if (src.frames, src.channels, src.samplerate) != (dst.frames, dst.channels, dst.samplerate):
+            raise ValueError(f"FLAC не совпал с WAV: {dst.frames} vs {src.frames} кадров")
+        part.replace(flac)
+        con = db.connect()
+        try:
+            con.execute("UPDATE sessions SET audio_path=?, updated_at=? WHERE id=?",
+                        (str(flac), db.now(), sid))
+            con.commit()
+        finally:
+            con.close()
+        wav.unlink()
+        logger.info("transcribe %s: аудио сжато в FLAC (%.0f MB)", sid, flac.stat().st_size / 2**20)
+    except Exception:  # noqa: BLE001
+        logger.warning("transcribe %s: не удалось сжать аудио — оставляю WAV", sid, exc_info=True)
+        part.unlink(missing_ok=True)
+
+
+def _run_summary(transcript: str, meta: dict) -> tuple[dict, str]:
+    """Саммари через Claude Opus способом из config.SUMMARY_BACKEND →
+    (followup, подпись движка для заметки и UI Библиотеки)."""
+    backend = config.SUMMARY_BACKEND
+    if backend == "claude_cli":
+        return (claude_cli.summarize(transcript, meta),
+                f"claude-code:{config.CLAUDE_CODE_MODEL}")
+    if backend == "api":
+        return (anthropic_api.summarize(transcript, meta),
+                f"anthropic-api:{config.ANTHROPIC_MODEL}")
+    raise PermanentStageError(
+        f"неизвестный SUMMARY_BACKEND={backend!r} — ожидается claude_cli или api")
 
 
 def summarize(session) -> None:
     sdir = session_dir(session["id"])
     transcript = (sdir / "transcript.txt").read_text(encoding="utf-8")
-    meta = {"title": _title(session), "duration_min": _duration_min(session)}
+    meta = {"title": _title(session), "duration_min": _duration_min(session),
+            "attendees": _attendees(session),
+            "date": to_local(session["started_at"]).date() if session["started_at"] else None}
 
-    # Одноразовый выбор движка при «Пересобрать саммари» (экран 06,
-    # app.resummarize): local — Claude не трогаем, claude — форсируется.
-    override_path = sdir / "engine_override"
-    override = None
-    if override_path.exists():
-        override = override_path.read_text(encoding="utf-8").strip()
-        override_path.unlink()
-    use_claude = config.USE_CLAUDE_CODE if override is None else override == "claude"
-
-    engine = config.OLLAMA_MODEL
-    claude_done = False
     try:
-        # RAM-гвард Ollama здесь, а не в оркестраторе: Claude-путь память не
-        # ест, блокировать всю стадию из-за Ollama нельзя (см. orchestrator.py).
-        memguard.require("summarize")
-        followup = summarize_ollama(transcript, meta)
-    except (OllamaDown, OllamaModelMissing, memguard.NotEnoughMemory) as exc:
-        # SPEC_v3 §10 предписывал только failed_retry; решение 2026-07-15:
-        # при включённом Claude саммари идёт напрямую через claude CLI
-        # (Max-подписка) — встреча не застревает из-за Ollama/RAM.
-        if not use_claude:
-            logger.error("summarize %s: Ollama недоступна — %s", session["id"], exc)
-            if session["id"] not in _ollama_notified:
-                _ollama_notified.add(session["id"])
-                notify("MeetMind",
-                       f"{exc} — встреча в очереди, обработается после запуска")
-            raise
-        logger.warning("summarize %s: Ollama недоступна (%s) → саммари напрямую "
-                       "через Claude", session["id"], exc)
-        direct = claude_booster.summarize_direct(transcript, meta)
-        if direct is None:
-            raise
-        followup = direct
-        engine = f"claude-code:{config.CLAUDE_CODE_MODEL}"
-        claude_done = True
-    validate_followup({k: v for k, v in followup.items() if k not in _SERVICE_KEYS})
+        followup, engine = _run_summary(transcript, meta)
+    except SummaryAuthError as exc:
+        # Без человека не починится — одно уведомление на сессию, дальше
+        # обычные ретраи: после claude login / нового ключа встреча дособерётся.
+        logger.error("summarize %s: Claude недоступен — %s", session["id"], exc)
+        if session["id"] not in _auth_notified:
+            _auth_notified.add(session["id"])
+            notify("BeeDott",
+                   f"{exc} — встреча в очереди, саммари соберётся после исправления",
+                   session_id=session["id"])
+        raise
 
-    # Claude-бустер (PLAN_v3 Task 7.4, opt-in): best-effort улучшение поверх
-    # готовой Ollama-версии. Любой сбой внутри boost() → None, стадия не падает.
-    if use_claude and not claude_done:
-        boosted = claude_booster.boost(transcript, followup, meta)
-        if boosted is not None:
-            followup = boosted
-            engine = f"claude-code:{config.CLAUDE_CODE_MODEL}"
-
-    followup = dict(followup, engine=engine)
+    revision = 1
+    prev_path = sdir / "followup.json"
+    if prev_path.exists():
+        try:
+            revision = int(json.loads(prev_path.read_text(encoding="utf-8")).get("revision", 1)) + 1
+        except (OSError, ValueError, TypeError):
+            revision = 2
+    followup = dict(followup, engine=engine, revision=revision)
     (sdir / "followup.json").write_text(
         json.dumps(followup, ensure_ascii=False, indent=1), encoding="utf-8")
     md = render_followup(
         followup, engine=engine, title=_title(session),
-        duration_min=_duration_min(session))
+        duration_min=_duration_min(session), revision=revision)
     (sdir / "followup.md").write_text(md, encoding="utf-8")
 
     # FTS-индекс для поиска в Библиотеке (экран 05). Отдельный короткоживущий
@@ -134,10 +175,9 @@ def summarize(session) -> None:
     finally:
         con.close()
 
-    logger.info("summarize %s: %d решений, %d action items%s",
-                session["id"], len(followup.get("decisions", [])),
-                len(followup.get("action_items", [])),
-                " (degraded)" if followup.get("degraded") else "")
+    logger.info("summarize %s: %d решений, %d action items (%s)",
+                session["id"], len(followup["decisions"]),
+                len(followup["action_items"]), engine)
 
 
 def _build_sinks() -> list:
@@ -161,7 +201,7 @@ def deliver(session) -> None:
     sid = session["id"]
     sdir = session_dir(sid)
     md = (sdir / "followup.md").read_text(encoding="utf-8")
-    when = datetime.fromisoformat(session["started_at"])
+    when = to_local(session["started_at"])
     con = db.connect()
 
     required_failed = None

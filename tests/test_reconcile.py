@@ -33,9 +33,10 @@ def test_recovers_recording_session_with_audio(tmp_path, monkeypatch):
 
     def fake_run(cmd, check, capture_output):
         calls.append(cmd)
-        # эмулируем ffmpeg: создаёт *_fixed.wav рядом с исходником
+        # эмулируем ffmpeg: создаёт *_fixed.wav рядом с исходником (настоящий
+        # WAV на 2 с — пустые/короткие записи reconcile теперь отменяет, P6)
         fixed = wav.with_name(wav.stem + "_fixed" + wav.suffix)
-        fixed.write_bytes(b"RIFF-FIXED" + b"\x00" * 200)
+        sf.write(str(fixed), np.full((32000, 1), 0.1), 16000)
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(reconcile.subprocess, "run", fake_run)
@@ -44,7 +45,7 @@ def test_recovers_recording_session_with_audio(tmp_path, monkeypatch):
     actions = reconcile.reconcile(con, notifier=lambda sid_, msg: notified.append((sid_, msg)))
 
     assert calls and calls[0][0] == "ffmpeg" and "-ignore_length" in calls[0]
-    assert wav.read_bytes().startswith(b"RIFF-FIXED")  # заменён починенным файлом
+    assert sf.info(str(wav)).frames == 32000  # заменён починенным файлом
 
     row = db.get_session(con, sid)
     assert row["state"] == State.RECORDED
@@ -169,3 +170,86 @@ def test_fixes_unclosed_wav_header_with_real_ffmpeg(tmp_path, monkeypatch):
     assert sr == samplerate
     assert fixed_data.shape[0] == n_frames
     np.testing.assert_array_equal(fixed_data, samples)
+
+
+# ───── аудит T3: живую запись Swift (owner=app) reconcile не трогает ─────────
+
+
+def _make_app_recording(con, *, age_sec: float):
+    import os
+    import time
+    sid = db.create_session(con, source="manual")
+    wav = session_dir(sid) / "audio.wav"
+    sf.write(str(wav), np.full((32000, 2), 0.1), 16000)
+    db.set_state(con, sid, State.RECORDING, audio_path=str(wav), audio_owner="app")
+    t = time.time() - age_sec
+    os.utime(wav, (t, t))
+    return sid, wav
+
+
+def test_live_app_recording_is_adopted_not_touched(tmp_path, monkeypatch):
+    """Демон рестартовал посреди записи, Swift продолжает писать WAV (свежий
+    mtime). reconcile не должен его переписывать ffmpeg-ом и закрывать сессию —
+    иначе всё, что Swift допишет после рестарта, уйдёт в удалённый inode."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid, wav = _make_app_recording(con, age_sec=5)
+    before = wav.read_bytes()
+
+    def boom(*a, **kw):
+        raise AssertionError("ffmpeg не должен вызываться для живой записи")
+
+    monkeypatch.setattr(reconcile.subprocess, "run", boom)
+
+    actions = reconcile.reconcile(con)
+
+    assert {"session_id": sid, "action": "adopted_app_recording"} in actions
+    assert db.get_session(con, sid)["state"] == State.RECORDING
+    assert wav.read_bytes() == before
+
+
+def test_stale_app_recording_is_recovered_as_before(tmp_path, monkeypatch):
+    """Swift давно перестал писать (приложение упало) — обычное восстановление."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid, wav = _make_app_recording(con, age_sec=600)
+    monkeypatch.setattr(reconcile, "_fix_wav_header", lambda p: None)
+
+    actions = reconcile.reconcile(con)
+
+    assert db.get_session(con, sid)["state"] == State.RECORDED
+    assert any(a["action"] == "recovered_recording" for a in actions)
+
+
+def test_only_newest_live_app_recording_is_adopted(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    old_sid, _ = _make_app_recording(con, age_sec=10)
+    con.execute("UPDATE sessions SET started_at='2026-01-01T00:00:00+00:00' WHERE id=?",
+                (old_sid,))
+    con.commit()
+    new_sid, _ = _make_app_recording(con, age_sec=3)
+    monkeypatch.setattr(reconcile, "_fix_wav_header", lambda p: None)
+
+    actions = reconcile.reconcile(con)
+
+    assert {"session_id": new_sid, "action": "adopted_app_recording"} in actions
+    assert db.get_session(con, old_sid)["state"] == State.RECORDED
+
+
+
+def test_recovered_recording_without_frames_is_cancelled(tmp_path, monkeypatch):
+    """Продукт P6: после краша пустой WAV (только заголовок AVAudioFile, 4096
+    байт) больше не уходит в транскрипцию — сессия отменяется."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = db.create_session(con, source="manual")
+    wav = session_dir(sid) / "audio.wav"
+    sf.write(str(wav), np.zeros((0, 2)), 48000)
+    wav.write_bytes(wav.read_bytes() + b"\x00" * 4000)  # как JUNK-чанк AVAudioFile
+    db.set_state(con, sid, State.RECORDING, audio_path=str(wav))
+    monkeypatch.setattr(reconcile, "_fix_wav_header", lambda p: None)
+
+    reconcile.reconcile(con)
+
+    assert db.get_session(con, sid)["state"] == State.CANCELLED

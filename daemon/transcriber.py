@@ -200,8 +200,11 @@ class Transcriber:
                 "Транскрипция работать НЕ будет."
             )
 
-    def transcribe(self, audio_file: str) -> Optional[list[dict]]:
-        """Транскрибировать файл. Возвращает [{start, end, text}, ...] или None.
+    def transcribe(self, audio_file: str) -> list[dict]:
+        """Транскрибировать файл. Возвращает [{start, end, text}, ...]; пустой
+        список — речи нет. Ошибки (нет файла, нет ffmpeg, сбой модели) не
+        глушатся, а летят наверх с причиной: раньше они превращались в None, и в
+        интерфейсе было «'NoneType' object is not iterable» (продукт P6).
 
         Длинные записи (> LONG_AUDIO_THRESHOLD_SEC) режутся ffmpeg-ом на
         чанки по CHUNK_SEC с перекрытием OVERLAP_SEC и склеиваются через
@@ -210,8 +213,7 @@ class Transcriber:
         """
         path = Path(audio_file)
         if not path.exists():
-            logger.error(f"Файл не найден: {audio_file}")
-            return None
+            raise FileNotFoundError(f"аудиофайл не найден: {audio_file}")
 
         channels = 1
         try:
@@ -222,21 +224,14 @@ class Transcriber:
             logger.warning(f"Не удалось прочитать длительность {audio_file}: {e}")
             duration = 0.0
 
-        try:
-            if channels == 2:
-                # Стерео от CaptureEngine: ch0 = микрофон, ch1 = системный звук
-                # — раздельная расшифровка каналов даёт деление на спикеров
-                # без диаризации («Спикер 1» = я, «Спикер 2» = собеседники).
-                return self._transcribe_stereo(str(path), duration)
-            segments = self._transcribe_mono(str(path), duration)
-            if segments is None:
-                return None
-            return _dedupe_segments(segments)
-        except Exception as e:
-            logger.error(f"Ошибка транскрипции: {e}", exc_info=True)
-            return None
+        if channels == 2:
+            # Стерео от CaptureEngine: ch0 = микрофон, ch1 = системный звук
+            # — раздельная расшифровка каналов даёт деление на спикеров
+            # без диаризации («Спикер 1» = я, «Спикер 2» = собеседники).
+            return self._transcribe_stereo(str(path), duration)
+        return _dedupe_segments(self._transcribe_mono(str(path), duration))
 
-    def _transcribe_mono(self, audio_path: str, duration: float) -> Optional[list[dict]]:
+    def _transcribe_mono(self, audio_path: str, duration: float) -> list[dict]:
         if duration > LONG_AUDIO_THRESHOLD_SEC:
             return self._transcribe_chunked(audio_path, duration)
         return self._transcribe_one(audio_path)
@@ -244,7 +239,7 @@ class Transcriber:
     # Метки каналов стерео-записи (порядок = порядок каналов в WAV).
     STEREO_SPEAKERS = ("Спикер 1", "Спикер 2")
 
-    def _transcribe_stereo(self, audio_path: str, duration: float) -> Optional[list[dict]]:
+    def _transcribe_stereo(self, audio_path: str, duration: float) -> list[dict]:
         """Разложить стерео на mic.wav/sys.wav (ffmpeg channelsplit), расшифровать
         каждый канал отдельно и слить сегменты по общему таймлайну (каналы
         синхронны — таймкоды не сдвигаются)."""
@@ -261,12 +256,8 @@ class Transcriber:
             for speaker, channel_path in zip(self.STEREO_SPEAKERS,
                                              (mic_path, sys_path)):
                 segments = self._transcribe_mono(str(channel_path), duration)
-                if segments is None:
-                    continue
                 merged.extend(
                     dict(s, speaker=speaker) for s in _dedupe_segments(segments))
-        if not merged:
-            return None
         merged.sort(key=lambda s: s.get("start") or 0.0)
         return merged
 
@@ -285,14 +276,13 @@ class Transcriber:
                 chunk_results.append({"start": start, "segments": segs})
             return merge_chunks(chunk_results, OVERLAP_SEC)
 
-    def _transcribe_one(self, audio_path: str) -> Optional[list[dict]]:
+    def _transcribe_one(self, audio_path: str) -> list[dict]:
         if self._mlx is not None:
             return self._transcribe_mlx(audio_path)
-        elif getattr(self, "_openai_model", None) is not None:
+        if getattr(self, "_openai_model", None) is not None:
             return self._transcribe_openai(audio_path)
-        else:
-            logger.error("Нет рабочего backend для транскрипции")
-            return None
+        raise RuntimeError("нет backend для транскрипции: не установлены ни mlx-whisper, "
+                           "ни openai-whisper")
 
     def _transcribe_mlx(self, audio_path: str) -> list[dict]:
         logger.info(f"MLX-Whisper: транскрибирую {audio_path}…")

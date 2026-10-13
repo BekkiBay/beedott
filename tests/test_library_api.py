@@ -1,8 +1,8 @@
 """Тесты API «Библиотеки встреч» (экраны 05-06 design_handoff_meetmind).
 
 Daemon-слой под новый UI: engine в followup.json, FTS-индексация заметок,
-socket-команды sessions_list / session_detail / search / resummarize /
-claude_set, плюс recording_started_at|title в status (таймер в дропдауне).
+socket-команды sessions_list / session_detail / search / resummarize,
+плюс recording_started_at|title в status (таймер в дропдауне).
 
 DaemonApp вызывается напрямую, без сокета (паттерн test_app_owner.py).
 """
@@ -11,7 +11,7 @@ import json
 import pytest
 
 import config
-from daemon import db, memguard, stages
+from daemon import claude_cli, db, stages
 from daemon.app import DaemonApp
 from daemon.paths import session_dir
 from daemon.states import State
@@ -54,15 +54,13 @@ def _mk_session(con, *, title="Синк", state=State.DELIVERED, transcript=True
 # ──────────────────── stages.summarize: engine + FTS-индексация ──────────────
 
 
-def _summarized(tmp_path, monkeypatch, *, use_claude=False):
+def _summarized(tmp_path, monkeypatch):
     monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
-    # RAM-гвард внутри stages.summarize не должен зависеть от машины
-    monkeypatch.setattr(memguard, "available", lambda: 64 * 2**30)
     con = db.connect()
     sid = _mk_session(con, state=State.TRANSCRIBED, followup=False)
-    monkeypatch.setattr(stages, "summarize_ollama",
-                        lambda transcript, meta: dict(GOOD, degraded=False))
-    monkeypatch.setattr(config, "USE_CLAUDE_CODE", use_claude)
+    monkeypatch.setattr(config, "SUMMARY_BACKEND", "claude_cli")
+    monkeypatch.setattr(config, "CLAUDE_CODE_MODEL", "opus")
+    monkeypatch.setattr(claude_cli, "summarize", lambda transcript, meta: dict(GOOD))
     stages.summarize(db.get_session(con, sid))
     return con, sid
 
@@ -71,7 +69,7 @@ def test_summarize_writes_engine_into_followup_json(tmp_path, monkeypatch):
     con, sid = _summarized(tmp_path, monkeypatch)
     followup = json.loads(
         (session_dir(sid) / "followup.json").read_text(encoding="utf-8"))
-    assert followup["engine"] == config.OLLAMA_MODEL
+    assert followup["engine"] == "claude-code:opus"
 
 
 def test_summarize_indexes_session_into_fts(tmp_path, monkeypatch):
@@ -200,7 +198,7 @@ def test_search_empty_query_returns_nothing(app):
 # ─────────────────────────────── resummarize ─────────────────────────────────
 
 
-def test_resummarize_delivered_session_requeues_and_sets_engine(app):
+def test_resummarize_delivered_session_requeues(app):
     con = app._con
     sid = _mk_session(con)
     for stage in ("transcribe", "summarize", "deliver"):
@@ -211,7 +209,7 @@ def test_resummarize_delivered_session_requeues_and_sets_engine(app):
                 " VALUES(?,?,?,?)", (sid, "telegram", "delivered", db.now()))
     con.commit()
 
-    app.resummarize({"session_id": sid, "engine": "claude"})
+    app.resummarize({"session_id": sid})
 
     assert db.get_session(con, sid)["state"] == State.TRANSCRIBED
     jobs = {r["stage"]: r["status"] for r in con.execute(
@@ -222,47 +220,19 @@ def test_resummarize_delivered_session_requeues_and_sets_engine(app):
     deliv = con.execute("SELECT status, delivered_at FROM deliveries"
                         " WHERE session_id=?", (sid,)).fetchone()
     assert deliv["status"] == "pending" and deliv["delivered_at"] is None
-    assert (session_dir(sid) / "engine_override").read_text() == "claude"
 
 
-def test_summarize_respects_engine_override_local(tmp_path, monkeypatch):
-    """override=local: бустер не зовётся даже при USE_CLAUDE_CODE=True;
-    файл override съедается (одноразовый)."""
-    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
-    monkeypatch.setattr(memguard, "available", lambda: 64 * 2**30)
-    con = db.connect()
-    sid = _mk_session(con, state=State.TRANSCRIBED, followup=False)
-    (session_dir(sid) / "engine_override").write_text("local")
-    monkeypatch.setattr(stages, "summarize_ollama",
-                        lambda transcript, meta: dict(GOOD, degraded=False))
-    monkeypatch.setattr(config, "USE_CLAUDE_CODE", True)
-    from daemon import claude_booster
-    monkeypatch.setattr(claude_booster, "boost",
-                        lambda *a, **k: pytest.fail("boost не должен вызываться"))
+def test_resummarize_forgets_telegram_progress(app):
+    """Пересборка сбрасывает доставки — значит, и прогресс Telegram-отправки:
+    иначе при побайтно том же тексте sink решит, что всё уже отправлено, и
+    сообщение не придёт."""
+    sid = _mk_session(app._con)
+    progress = session_dir(sid) / "telegram_progress.json"
+    progress.write_text('{"hash": "x", "sent": ["1"]}')
 
-    stages.summarize(db.get_session(con, sid))
+    app.resummarize({"session_id": sid})
 
-    followup = json.loads(
-        (session_dir(sid) / "followup.json").read_text(encoding="utf-8"))
-    assert followup["engine"] == config.OLLAMA_MODEL
-    assert not (session_dir(sid) / "engine_override").exists()
-
-
-# ─────────────────────────────── claude_set ──────────────────────────────────
-
-
-def test_claude_set_flips_runtime_flag_and_persists(app, tmp_path, monkeypatch):
-    from daemon.paths import app_dir
-    (app_dir() / "config.env").write_text("TELEGRAM_BOT_TOKEN=tok\n")
-    monkeypatch.setattr(config, "USE_CLAUDE_CODE", True)
-
-    out = app.claude_set({"enabled": False})
-
-    assert out["enabled"] is False
-    assert config.USE_CLAUDE_CODE is False
-    content = (app_dir() / "config.env").read_text()
-    assert "USE_CLAUDE_CODE=false" in content
-    assert "TELEGRAM_BOT_TOKEN=tok" in content  # чужие ключи не потеряны
+    assert not progress.exists()
 
 
 # ───────────────────────── status: метаданные записи ─────────────────────────
@@ -273,13 +243,6 @@ def test_status_reports_recording_title_and_started_at(app):
     st = app.status({})
     assert st["recording_title"] == "Планёрка"
     assert st["recording_started_at"] is not None
-
-
-def test_status_reports_claude_enabled(app, monkeypatch):
-    monkeypatch.setattr(config, "USE_CLAUDE_CODE", True)
-    assert app.status({})["claude_enabled"] is True
-    monkeypatch.setattr(config, "USE_CLAUDE_CODE", False)
-    assert app.status({})["claude_enabled"] is False
 
 
 # ─────────────────────────────── FTS backfill ────────────────────────────────
@@ -348,7 +311,7 @@ def test_reprocess_during_failed_retry_requeues_without_crash(app):
 
 def test_resummarize_during_summarizing_requeues_without_crash(app):
     """«Пересобрать саммари» пока стадия в failed_retry (state=SUMMARIZING):
-    не ValueError, а requeue + engine_override (лог 2026-07-15: illegal
+    не ValueError, а requeue (лог 2026-07-15: illegal
     transition SUMMARIZING -> TRANSCRIBED)."""
     con = app._con
     sid = _mk_session(con, state=State.SUMMARIZING, followup=False)
@@ -358,12 +321,11 @@ def test_resummarize_during_summarizing_requeues_without_crash(app):
         " next_retry_at='2099-01-01T00:00:00+00:00' WHERE session_id=?", (sid,))
     con.commit()
 
-    app.resummarize({"session_id": sid, "engine": "claude"})  # не должен бросить
+    app.resummarize({"session_id": sid})  # не должен бросить
 
     job = con.execute("SELECT status, next_retry_at FROM pipeline_jobs"
                       " WHERE session_id=? AND stage='summarize'", (sid,)).fetchone()
     assert job["status"] == "queued" and job["next_retry_at"] is None
-    assert (session_dir(sid) / "engine_override").read_text() == "claude"
 
 
 def test_transcribe_stage_writes_speaker_prefixed_lines(tmp_path, monkeypatch):
@@ -389,3 +351,273 @@ def test_transcribe_stage_writes_speaker_prefixed_lines(tmp_path, monkeypatch):
     assert text == "Спикер 1: привет\nСпикер 2: по релизу"
     segs = json.loads((session_dir(sid) / "transcript.json").read_text("utf-8"))
     assert segs[0]["speaker"] == "Спикер 1"
+
+
+def test_transcribe_stage_without_speech_is_permanent_error(tmp_path, monkeypatch):
+    from daemon.orchestrator import PermanentStageError
+    from daemon.transcriber import Transcriber
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = _mk_session(con)
+    monkeypatch.setattr(Transcriber, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Transcriber, "transcribe", lambda self, p: [])
+    with pytest.raises(PermanentStageError):
+        stages.transcribe(db.get_session(con, sid))
+
+
+# ───── продукт P10: «Хранить аудио» и сжатие в FLAC после транскрипции ───────
+
+
+def test_set_keep_audio_persists_flag(app):
+    sid = _mk_session(app._con)
+    assert app.set_keep_audio({"session_id": sid, "keep": True}) == {
+        "session_id": sid, "keep_audio": True}
+    assert db.get_session(app._con, sid)["keep_audio"] == 1
+    row = next(r for r in app.sessions_list({})["sessions"] if r["id"] == sid)
+    assert row["keep_audio"] is True
+    assert row["source"] == "manual"
+    assert "has_audio" in row
+
+
+def _stage_ready_for_transcribe(tmp_path, monkeypatch, seconds=2):
+    import numpy as np
+    import soundfile as sf
+    from daemon.transcriber import Transcriber
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = db.create_session(con, source="manual")
+    wav = session_dir(sid) / "audio.wav"
+    rng = np.random.default_rng(1)
+    sf.write(str(wav), (rng.standard_normal((16000 * seconds, 2)) * 0.1), 16000,
+             subtype="PCM_16")
+    db.set_state(con, sid, State.RECORDING, audio_path=str(wav))
+    db.set_state(con, sid, State.RECORDED)
+    monkeypatch.setattr(Transcriber, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Transcriber, "transcribe",
+                        lambda self, p: [{"start": 0.0, "end": 1.0, "text": "привет"}])
+    return con, sid, wav
+
+
+def test_transcribe_compresses_audio_to_flac(tmp_path, monkeypatch):
+    import soundfile as sf
+    con, sid, wav = _stage_ready_for_transcribe(tmp_path, monkeypatch)
+    frames = sf.info(str(wav)).frames
+
+    stages.transcribe(db.get_session(con, sid))
+
+    flac = wav.with_suffix(".flac")
+    assert flac.exists() and not wav.exists()
+    assert db.get_session(con, sid)["audio_path"] == str(flac)
+    info = sf.info(str(flac))
+    assert (info.frames, info.channels) == (frames, 2)
+
+
+def test_transcribe_keeps_wav_when_compression_fails(tmp_path, monkeypatch):
+    con, sid, wav = _stage_ready_for_transcribe(tmp_path, monkeypatch)
+
+    def broken_ffmpeg(*a, **kw):
+        raise OSError("ffmpeg сломался")
+
+    monkeypatch.setattr(stages.subprocess, "run", broken_ffmpeg)
+    stages.transcribe(db.get_session(con, sid))  # стадия не падает
+
+    assert wav.exists()
+    assert db.get_session(con, sid)["audio_path"] == str(wav)
+
+
+def test_maintenance_tick_runs_retention(app, monkeypatch):
+    """Продукт P10: retention раньше запускался только при старте демона —
+    демон, работающий неделями, аудио не чистил."""
+    calls = []
+    monkeypatch.setattr("daemon.app.retention.sweep", lambda con: calls.append(con) or ["x"])
+    app.maintenance_tick()
+    assert len(calls) == 1
+
+
+# ───── продукт P12: пересборка саммари помечена и отвечает на старое сообщение ─
+
+
+def test_resummarized_followup_is_marked_as_update(tmp_path, monkeypatch):
+    con, sid = _summarized(tmp_path, monkeypatch)
+    first = (session_dir(sid) / "followup.md").read_text(encoding="utf-8")
+    assert "Обновлённая версия" not in first
+
+    stages.summarize(db.get_session(con, sid))  # «Пересобрать саммари»
+
+    followup = json.loads((session_dir(sid) / "followup.json").read_text(encoding="utf-8"))
+    assert followup["revision"] == 2
+    md = (session_dir(sid) / "followup.md").read_text(encoding="utf-8")
+    assert md.startswith("🔄 Обновлённая версия фоллоу-апа (№2)")
+
+
+def test_resummarize_remembers_previous_telegram_message(app):
+    sid = _mk_session(app._con)
+    (session_dir(sid) / "telegram_progress.json").write_text(
+        '{"hash": "x", "sent": ["555", "556"]}')
+
+    app.resummarize({"session_id": sid})
+
+    assert (session_dir(sid) / "telegram_reply_to").read_text() == "555"
+    assert not (session_dir(sid) / "telegram_progress.json").exists()
+
+
+# ───── продукт P14: удаление встречи ──────────────────────────────────────────
+
+
+def test_delete_session_removes_everything_local(app):
+    con = app._con
+    sid = _mk_session(con)
+    db.enqueue_job(con, sid, "transcribe")
+    con.execute("INSERT INTO deliveries(session_id, sink, status) VALUES(?,?,?)",
+                (sid, "telegram", "delivered"))
+    db.index_note(con, sid, title="t", transcript="секретный разговор", summary="s")
+    con.commit()
+    sdir = session_dir(sid)
+
+    assert app.delete_session({"session_id": sid}) == {"session_id": sid, "deleted": True}
+
+    assert db.get_session(con, sid) is None
+    for table in ("pipeline_jobs", "deliveries", "notes_fts"):
+        assert con.execute(f"SELECT COUNT(*) n FROM {table} WHERE session_id=?",
+                           (sid,)).fetchone()["n"] == 0
+    assert not sdir.exists()
+    assert app.search({"query": "секретный"})["results"] == []
+
+
+def test_delete_session_refuses_active_recording(app):
+    from daemon.control import ControlError
+    sid = app.start_recording({"audio_path_owner": "app"})["session_id"]
+    with pytest.raises(ControlError) as exc:
+        app.delete_session({"session_id": sid})
+    assert exc.value.code == "busy"
+
+
+def test_delete_session_refuses_while_stage_running(app):
+    from daemon.control import ControlError
+    con = app._con
+    sid = _mk_session(con, state=State.TRANSCRIBING)
+    db.enqueue_job(con, sid, "transcribe")
+    con.execute("UPDATE pipeline_jobs SET status='running' WHERE session_id=?", (sid,))
+    con.commit()
+    with pytest.raises(ControlError) as exc:
+        app.delete_session({"session_id": sid})
+    assert exc.value.code == "busy"
+
+
+def test_delete_session_unknown_id(app):
+    from daemon.control import ControlError
+    with pytest.raises(ControlError) as exc:
+        app.delete_session({"session_id": "nope"})
+    assert exc.value.code == "not_found"
+
+
+# ───── продукт P13: импорт готового аудиофайла ────────────────────────────────
+
+
+@pytest.fixture()
+def sync_app(app):
+    """import_audio конвертирует в фоне — в тестах выполняем сразу."""
+    app._run_async = lambda fn, *args: fn(*args)
+    return app
+
+
+def test_import_audio_creates_session_and_queues_transcription(sync_app, tmp_path):
+    import os
+    import numpy as np
+    import soundfile as sf
+    src = tmp_path / "Созвон с клиентом.wav"
+    sf.write(str(src), np.full((44100 * 3, 2), 0.1), 44100)
+    os.utime(src, (1_780_000_000, 1_780_000_000))
+
+    sid = sync_app.import_audio({"path": str(src)})["session_id"]
+
+    row = db.get_session(sync_app._con, sid)
+    assert row["state"] == State.RECORDED
+    assert row["source"] == "import"
+    assert row["title"] == "Созвон с клиентом"
+    assert row["audio_path"].endswith("audio.flac")
+    info = sf.info(row["audio_path"])
+    assert (info.channels, info.samplerate) == (1, 16000)  # моно: без ложного деления на спикеров
+    assert abs(info.frames / info.samplerate - 3.0) < 0.05
+    from datetime import datetime
+    started = datetime.fromisoformat(row["started_at"]).timestamp()
+    assert abs(started - (1_780_000_000 - 3)) < 1  # начало = конец файла минус длительность
+    job = sync_app._con.execute(
+        "SELECT status FROM pipeline_jobs WHERE session_id=? AND stage='transcribe'",
+        (sid,)).fetchone()
+    assert job["status"] == "queued"
+    assert src.exists()  # исходник не трогаем
+
+
+def test_import_audio_missing_file_is_bad_params(sync_app, tmp_path):
+    from daemon.control import ControlError
+    with pytest.raises(ControlError) as exc:
+        sync_app.import_audio({"path": str(tmp_path / "нет.m4a")})
+    assert exc.value.code == "bad_params"
+
+
+def test_import_audio_not_audio_cancels_with_notice(sync_app, tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr("daemon.app.notify", lambda t, m, *a, **k: sent.append(m))
+    src = tmp_path / "заметки.txt"
+    src.write_text("это не звук")
+
+    sid = sync_app.import_audio({"path": str(src)})["session_id"]
+
+    assert db.get_session(sync_app._con, sid)["state"] == State.CANCELLED
+    assert any("импорт" in m.lower() for m in sent)
+
+
+# ───── продукт P8: участники из календаря и переименование ────────────────────
+
+
+def test_start_recording_stores_attendees(app):
+    sid = app.start_recording({"audio_path_owner": "app", "title": "Синк",
+                               "attendees": ["Аня", "Борис", 5, ""]})["session_id"]
+    assert json.loads(db.get_session(app._con, sid)["attendees"]) == ["Аня", "Борис"]
+
+
+def test_rename_session_updates_title_and_search(app):
+    con = app._con
+    sid = _mk_session(con, title="Встреча 10:10")
+    db.index_note(con, sid, title="Встреча 10:10", transcript="текст", summary="s")
+
+    assert app.rename_session({"session_id": sid, "title": "  Ретро спринта  "}) == {
+        "session_id": sid, "title": "Ретро спринта"}
+
+    assert db.get_session(con, sid)["title"] == "Ретро спринта"
+    assert con.execute("SELECT title FROM notes_fts WHERE session_id=?",
+                       (sid,)).fetchone()["title"] == "Ретро спринта"
+
+
+def test_rename_session_rejects_empty_title(app):
+    from daemon.control import ControlError
+    sid = _mk_session(app._con)
+    with pytest.raises(ControlError) as exc:
+        app.rename_session({"session_id": sid, "title": "   "})
+    assert exc.value.code == "bad_params"
+
+
+def test_summarize_passes_attendees_to_llm(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = _mk_session(con, state=State.TRANSCRIBED, followup=False)
+    con.execute("UPDATE sessions SET attendees=? WHERE id=?", ('["Аня", "Борис"]', sid))
+    con.commit()
+    seen = {}
+
+    def fake_claude(transcript, meta):
+        seen.update(meta)
+        return dict(GOOD)
+
+    monkeypatch.setattr(config, "SUMMARY_BACKEND", "claude_cli")
+    monkeypatch.setattr(claude_cli, "summarize", fake_claude)
+    stages.summarize(db.get_session(con, sid))
+    assert seen["attendees"] == ["Аня", "Борис"]
+
+
+def test_prompt_mentions_attendees():
+    from daemon.summarizer import build_prompt
+    meta = {"title": "Синк", "duration_min": 30, "attendees": ["Аня", "Борис"]}
+    assert "Аня, Борис" in build_prompt("текст", meta)
+    assert "Участники" not in build_prompt("текст", {"title": "Синк"})

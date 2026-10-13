@@ -275,3 +275,31 @@ def test_long_processing_default_clock_is_time_monotonic(tmp_path, monkeypatch):
 
     assert db.get_session(con, sid)["state"] == State.DELIVERED
     assert notified == []
+
+
+# ───── продукт P6: «в записи нет речи» не ретраится 8 раз по 3 часа ───────────
+
+
+def test_permanent_stage_error_fails_immediately_without_retries(tmp_path, monkeypatch):
+    from daemon.orchestrator import PermanentStageError
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    _no_memory_limit(monkeypatch)
+    con = db.connect()
+    sid = db.create_session(con, source="manual")
+    for st in (State.RECORDING, State.RECORDED):
+        db.set_state(con, sid, st)
+    db.enqueue_job(con, sid, "transcribe")
+    notified = []
+
+    def no_speech(s):
+        raise PermanentStageError("в записи не распознано речи")
+
+    orch = Orchestrator(con, stages={"transcribe": no_speech},
+                        notifier=lambda sid_, stage, err: notified.append(err))
+    orch.run_once_until_idle()
+
+    job = con.execute("SELECT * FROM pipeline_jobs WHERE session_id=?", (sid,)).fetchone()
+    assert job["status"] == "failed"
+    assert job["attempts"] == 1
+    assert db.get_session(con, sid)["state"] == State.FAILED
+    assert notified == ["в записи не распознано речи"]

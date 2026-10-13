@@ -12,7 +12,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, meeting_key TEXT, title TEXT,
   source TEXT NOT NULL, state TEXT NOT NULL,
   started_at TEXT NOT NULL, ended_at TEXT, audio_path TEXT, gap_note TEXT,
-  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  audio_owner TEXT,  -- кто пишет audio.wav: app (Swift) | daemon (Recorder)
+  keep_audio INTEGER NOT NULL DEFAULT 0,  -- 1 = retention аудио не удаляет
+  attendees TEXT);  -- JSON-список участников из календаря
 CREATE TABLE IF NOT EXISTS pipeline_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL REFERENCES sessions(id),
@@ -40,7 +43,38 @@ def connect() -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=5000")
     con.executescript(SCHEMA)
+    _migrate(con)
     return con
+
+
+# Колонки sessions, появившиеся после первой версии схемы: имя → объявление.
+# audio_owner — аудит T3 (кто пишет WAV, переживает рестарт демона);
+# keep_audio — продукт P10; attendees — продукт P8.
+_SESSION_COLUMNS_ADDED = {
+    "audio_owner": "TEXT",
+    "keep_audio": "INTEGER NOT NULL DEFAULT 0",
+    "attendees": "TEXT",
+}
+
+
+def _migrate(con) -> None:
+    """Догнать схему старых БД (CREATE TABLE IF NOT EXISTS новых колонок не
+    добавляет)."""
+    existing = _session_columns(con)
+    for name, decl in _SESSION_COLUMNS_ADDED.items():
+        if name in existing:
+            continue
+        try:
+            con.execute(f"ALTER TABLE sessions ADD COLUMN {name} {decl}")
+            con.commit()
+        except sqlite3.OperationalError as exc:
+            # другой процесс (демон / CLI) успел добавить колонку между проверкой и ALTER
+            if "duplicate column" not in str(exc):
+                raise
+
+
+def _session_columns(con) -> set[str]:
+    return {r[1] for r in con.execute("PRAGMA table_info(sessions)")}
 
 
 def create_session(con, *, source: str, title: str | None = None,
@@ -59,7 +93,12 @@ def get_session(con, sid: str) -> sqlite3.Row:
 
 
 def set_state(con, sid: str, new: State, **fields) -> None:
-    cur = State(get_session(con, sid)["state"])
+    row = get_session(con, sid)
+    if row is None:
+        # сессию удалили (продукт P14) — для оркестратора это «недопустимый
+        # переход»: try_set_state вернёт False, джоба уйдёт в skipped
+        raise ValueError(f"нет сессии {sid}")
+    cur = State(row["state"])
     assert_transition(cur, new)
     sets = ", ".join(f"{k}=?" for k in fields)
     con.execute(

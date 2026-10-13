@@ -14,8 +14,8 @@ openai-whisper>=20231117
 sounddevice>=0.4.6
 
 # ─── LLM ─────────────────────────────────────────────────────────────────────
-# Anthropic SDK для Claude API; Ollama дёргается через requests
-anthropic>=0.40.0
+# Anthropic SDK — для SUMMARY_BACKEND=api (claude_cli обходится без него)
+anthropic>=1.13
 
 # ─── триггеры ────────────────────────────────────────────────────────────────
 APScheduler>=3.10.4

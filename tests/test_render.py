@@ -6,20 +6,20 @@ from tests.conftest import GOOD_FOLLOWUP as GOOD
 
 def test_render_contains_sections():
     md = render_followup(GOOD, engine="vikhr-8b", title="Синк", duration_min=30)
-    for anchor in ("**Контекст**", "**Договорённости**", "**Action items**", "vikhr-8b"):
+    for anchor in ("**Коротко**", "**Договорённости**", "**Задачи**", "vikhr-8b"):
         assert anchor in md
 
 
 def test_render_all_section_headers_present():
     md = render_followup(GOOD, engine="vikhr-8b", title="Синк", duration_min=30)
     for anchor in (
-        "**Контекст**",
-        "**Что обсуждалось**",
+        "**Коротко**",
         "**Договорённости**",
-        "**Action items**",
-        "**Открытые вопросы**",
+        "**Задачи**",
     ):
         assert anchor in md
+    # пустые разделы (в GOOD — discussed и open_questions) не показываем
+    assert "**Что обсуждалось**" not in md and "**Открытые вопросы**" not in md
 
 
 def test_render_action_item_format():
@@ -27,12 +27,27 @@ def test_render_action_item_format():
         {"task": "сделать X", "owner": "Bekzod", "deadline": "2026-07-20"}
     ])
     md = render_followup(followup, engine="vikhr-8b", title="Синк", duration_min=30)
-    assert "📅 2026-07-20 — сделать X — Bekzod" in md
+    # человеческая дата: день недели и число, а не ISO
+    assert "• сделать X — Bekzod, до пн, 20.07" in md
 
 
-def test_render_deadline_none_shows_asap():
+def test_render_deadline_none_shows_no_deadline():
+    """Продукт P9: задача без срока — без даты, а не ложная срочность."""
     md = render_followup(GOOD, engine="vikhr-8b", title="Синк", duration_min=30)
-    assert "📅 asap — сделать — Bekzod" in md
+    assert "• сделать — Bekzod\n" in md + "\n"
+    assert "asap" not in md and "срочно" not in md
+
+
+def test_render_explicit_asap_is_kept():
+    followup = dict(GOOD, action_items=[{"task": "починить", "owner": "Аня", "deadline": "asap"}])
+    md = render_followup(followup, engine="vikhr-8b", title="Синк", duration_min=30)
+    assert "• починить — Аня, срочно" in md
+
+
+def test_render_free_text_deadline_kept_as_is():
+    followup = dict(GOOD, action_items=[{"task": "т", "owner": "Аня", "deadline": "до релиза"}])
+    md = render_followup(followup, engine="vikhr-8b", title="Синк", duration_min=30)
+    assert "• т — Аня, до релиза" in md
 
 
 def test_render_empty_lists_show_net():
@@ -44,7 +59,8 @@ def test_render_empty_lists_show_net():
         "open_questions": [],
     }
     md = render_followup(followup, engine="vikhr-8b", title="Синк", duration_min=10)
-    assert md.count("нет") == 5  # context + discussed + decisions + action_items + open_questions
+    assert md.count("нет") == 1  # только «Коротко»; пустые списки не показываем
+    assert "**Задачи**" not in md
 
 
 def test_render_engine_icon_local_vs_cloud():
@@ -85,3 +101,9 @@ def test_render_degraded_warning():
 def test_render_not_degraded_no_warning():
     md = render_followup(GOOD, engine="vikhr-8b", title="t", duration_min=5)
     assert "⚠️" not in md
+
+
+def test_render_marks_updated_revision():
+    md = render_followup(GOOD, engine="x", title="Синк", duration_min=30, revision=3)
+    assert md.startswith("🔄 Обновлённая версия фоллоу-апа (№3)")
+    assert "Обновлённая" not in render_followup(GOOD, engine="x", title="Синк", duration_min=30)

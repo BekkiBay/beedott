@@ -52,3 +52,12 @@ def test_reprocess_from_failed_resets_session_and_job(tmp_path, monkeypatch):
     assert db.get_session(con, sid)["state"] == State.RECORDED
     job = db.next_job(con)
     assert job["stage"] == "transcribe" and job["status"] == "queued"
+
+
+def test_migration_survives_concurrent_add_column(tmp_path, monkeypatch):
+    """Два процесса открыли старую БД одновременно: оба увидели, что колонки
+    нет, второй ALTER падает с «duplicate column». connect() не должен падать."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()  # колонка уже есть
+    monkeypatch.setattr(db, "_session_columns", lambda c: {"id", "state"})
+    db._migrate(con)  # «устаревший» снимок колонок → ALTER на существующую колонку

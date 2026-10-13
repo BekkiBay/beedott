@@ -2,8 +2,8 @@
 Конфигурация MeetMind v3.
 
 Все настройки читаются из .env (см. .env.example). Любую можно переопределить
-переменной окружения. Сложные настройки выбора движка (Ollama vs Claude)
-доступны в одном месте.
+переменной окружения. Способ вызова Claude для саммари (SUMMARY_BACKEND)
+настраивается в одном месте.
 
 Секреты живут в `app_dir()/config.env` (SPEC_v3 D14), вне репозитория, с
 правами 0600. Для разработки — fallback на `./.env` в корне проекта, если
@@ -18,9 +18,10 @@ from daemon.paths import app_dir
 
 # .env: приоритет — app_dir()/config.env (прод, секреты, chmod 600),
 # fallback — ./.env в корне проекта (разработка).
+DEV_ENV_PATH = Path(__file__).parent / ".env"
 env_path = app_dir() / "config.env"
 if not env_path.exists():
-    env_path = Path(__file__).parent / ".env"
+    env_path = DEV_ENV_PATH
 load_dotenv(env_path)
 
 
@@ -35,11 +36,26 @@ def write_config_env(values: dict[str, str]) -> Path:
 
 def update_config_env(key: str, value: str) -> Path:
     """Обновить один ключ в app_dir()/config.env, сохранив остальные строки
-    (write_config_env перезаписывает файл целиком — тут read-modify-write)."""
+    (write_config_env перезаписывает файл целиком — тут read-modify-write).
+
+    Если config.env ещё нет, а настройки живут в dev-файле ./.env — сначала
+    переносим его содержимое целиком: после появления config.env модуль читает
+    только его, и без переноса пропали бы токены Telegram (аудит T4)."""
     path = app_dir() / "config.env"
-    lines = path.read_text().splitlines() if path.exists() else []
-    lines = [ln for ln in lines if not ln.startswith(f"{key}=")]
-    lines.append(f"{key}={value}")
+    if path.exists():
+        lines = path.read_text().splitlines()
+    elif DEV_ENV_PATH.exists():
+        lines = DEV_ENV_PATH.read_text().splitlines()
+    else:
+        lines = []
+    new_line = f"{key}={value}"
+    idx = next((i for i, ln in enumerate(lines) if ln.startswith(f"{key}=")), None)
+    if idx is None:
+        lines.append(new_line)
+    else:
+        lines[idx] = new_line
+        lines = lines[:idx + 1] + [ln for ln in lines[idx + 1:]
+                                   if not ln.startswith(f"{key}=")]
     path.write_text("\n".join(lines) + "\n")
     path.chmod(0o600)
     return path
@@ -53,36 +69,19 @@ def _bool(name: str, default: bool = False) -> bool:
 
 
 # ─── LLM / суммаризация ─────────────────────────────────────────────────────
-# Три backend'а, любой можно включить независимо. Все включённые работают
-# параллельно, но «cloud» слот занимает один (Claude Code если включён,
-# иначе Anthropic API). «local» слот — всегда Ollama если включена.
-#
-# Рекомендуемые конфигурации:
-#   Есть Max-подписка → USE_OLLAMA=true + USE_CLAUDE_CODE=true (без API ключа)
-#   Нет Max, есть API → USE_OLLAMA=true + USE_ANTHROPIC=true
-#   Только локально   → USE_OLLAMA=true, остальные false
+# Саммари всегда делает Claude Opus. Способ вызова — SUMMARY_BACKEND:
+#   claude_cli — `claude -p` по Max-подписке, API-ключ не нужен (по умолчанию)
+#   api        — Anthropic API по ANTHROPIC_API_KEY, отдельный биллинг
+SUMMARY_BACKEND = os.getenv("SUMMARY_BACKEND", "claude_cli").strip().lower()
 
-USE_OLLAMA = _bool("USE_OLLAMA", True)
-USE_CLAUDE_CODE = _bool("USE_CLAUDE_CODE", True)  # через Max-подписку
-USE_ANTHROPIC = _bool("USE_ANTHROPIC", False)     # отдельный API-биллинг
-
-# ── Ollama ──
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-# Дефолт: Vikhr-Nemo 12B — русский тюн поверх Mistral Nemo, 128K context, ~7.5GB Q4.
-# Альтернативы:
-#   qwen3.5:14b               — свежий мейнстрим (Feb 2026), 9GB
-#   t-tech/t-pro-it-2.0       — русская премиум 32B, требует sysctl tweak
-#   gemma3:12b                — Google long-context champion
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "vikhr-nemo:12b-instruct-q4")
-
-# ── Claude Code CLI (рекомендуется для Max-подписчиков) ──
-CLAUDE_CODE_BINARY = os.getenv("CLAUDE_CODE_BINARY", "claude")
-# Алиасы Claude Code: opus | sonnet | haiku. Можно указать полное имя модели.
+# ── claude_cli ──
+# Алиас модели Claude Code (opus = актуальный Opus) или полное имя модели.
+# Путь к claude, если его нет в PATH демона, — MEETMIND_CLAUDE_BIN.
 CLAUDE_CODE_MODEL = os.getenv("CLAUDE_CODE_MODEL", "opus")
 
-# ── Anthropic API (если нет Max, нужен API ключ) ──
+# ── api ──
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
 
 # ─── Транскрипция ───────────────────────────────────────────────────────────
 # tiny / base / small / medium / large / large-v3 / turbo
@@ -151,13 +150,11 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 def summary() -> str:
     """Текстовая сводка по конфигу — для логирования при старте."""
     lines = ["━" * 60, "MeetMind v3 config:"]
-    cloud_info = "off"
-    if USE_CLAUDE_CODE:
-        cloud_info = f"claude-code:{CLAUDE_CODE_MODEL} (Max)"
-    elif USE_ANTHROPIC:
-        cloud_info = f"anthropic-api:{ANTHROPIC_MODEL}"
-    lines.append(f"  LLM:        ollama={USE_OLLAMA}({OLLAMA_MODEL})")
-    lines.append(f"              cloud={cloud_info}")
+    if SUMMARY_BACKEND == "api":
+        llm = f"anthropic-api:{ANTHROPIC_MODEL}"
+    else:
+        llm = f"claude-code:{CLAUDE_CODE_MODEL} (Max)"
+    lines.append(f"  LLM:        {SUMMARY_BACKEND} → {llm}")
     lines.append(f"  Whisper:    {WHISPER_MODEL} / {WHISPER_LANGUAGE}")
     lines.append(f"  Audio:      agg=«{AGGREGATE_DEVICE_NAME}»  "
                  f"bh=«{BLACKHOLE_DEVICE_NAME}»  rate={AUDIO_SAMPLE_RATE}Hz")

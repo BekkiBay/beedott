@@ -1,11 +1,13 @@
 import json
 
 import pytest
-import requests
 
 from daemon.summarizer import (
-    MAP_REDUCE_CHUNK_CHARS,
-    summarize_ollama,
+    FOLLOWUP_KEYS,
+    FOLLOWUP_SCHEMA,
+    build_prompt,
+    normalize_followup,
+    parse_followup,
     validate_followup,
 )
 from tests.conftest import GOOD_FOLLOWUP as GOOD
@@ -64,180 +66,85 @@ def test_validate_not_a_dict():
         validate_followup(["not", "a", "dict"])
 
 
-# ─────────────────────────────── summarize_ollama (mocked) ───────────────────
+# ───────── продукт P9: null вместо строки — нормализуем, а не выбрасываем ──────
 
 
-class FakeResponse:
-    def __init__(self, payload: dict, status_code: int = 200):
-        self._payload = payload
-        self.status_code = status_code
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise requests.HTTPError(f"status {self.status_code}")
-
-    def json(self):
-        return self._payload
-
-
-def _ollama_payload(content_obj: dict) -> dict:
-    return {"message": {"role": "assistant", "content": json.dumps(content_obj, ensure_ascii=False)}}
-
-
-@pytest.fixture(autouse=True)
-def _ollama_healthy(monkeypatch):
-    """summarize_ollama теперь дёргает ollama_client.ensure_running/ensure_model
-    в начале (Task 2.5 — health-check вынесен из summarizer в daemon/ollama_client.py).
-    В этих тестах Ollama всегда «жива» с моделью test-model, чтобы тестировался
-    только сам chat-путь, как и до вынесения HTTP-слоя. Ветки ensure_running/
-    ensure_model покрыты отдельно в tests/test_ollama_client.py."""
-    def fake_get(url, timeout=None):
-        return FakeResponse({"models": [{"name": "test-model"}]})
-
-    monkeypatch.setattr("daemon.ollama_client.requests.get", fake_get)
-
-
-def test_summarize_ollama_success(monkeypatch):
-    calls = []
-
-    def fake_post(url, json=None, timeout=None):
-        calls.append((url, json))
-        return FakeResponse(_ollama_payload(GOOD))
-
-    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
-
-    result = summarize_ollama(
-        "Спикер 1: привет\nСпикер 2: привет",
-        {"title": "Синк", "duration_min": 15},
-        model="test-model",
-        ollama_url="http://fake:11434",
-    )
-
-    assert len(calls) == 1
-    url, payload = calls[0]
-    assert url == "http://fake:11434/api/chat"
-    assert payload["format"] == "json"
-    assert payload["model"] == "test-model"
-    assert payload["options"]["num_ctx"] == 16384
-
-    assert result["degraded"] is False
-    for key in ("context", "discussed", "decisions", "action_items", "open_questions"):
-        assert result[key] == GOOD[key]
-
-
-def test_summarize_ollama_invalid_json_degrades_after_retries(monkeypatch):
-    calls = []
-
-    def fake_post(url, json=None, timeout=None):
-        calls.append(1)
-        return FakeResponse({"message": {"role": "assistant", "content": "это не json вообще"}})
-
-    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
-
-    result = summarize_ollama(
-        "какой-то транскрипт",
-        {"title": "Синк", "duration_min": 15},
-        model="test-model",
-        ollama_url="http://fake:11434",
-    )
-
-    assert len(calls) == 3  # 1 попытка + MAX_JSON_RETRIES(2) ретрая
-    assert result["degraded"] is True
-    assert result["context"] == "это не json вообще"
-    assert result["discussed"] == []
-    assert result["decisions"] == []
-    assert result["action_items"] == []
-    assert result["open_questions"] == []
-
-
-def test_summarize_ollama_network_error_degrades(monkeypatch):
-    def fake_post(url, json=None, timeout=None):
-        raise requests.ConnectionError("ollama не поднята")
-
-    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
-
-    result = summarize_ollama(
-        "транскрипт встречи",
-        {"title": "Синк", "duration_min": 15},
-        model="test-model",
-        ollama_url="http://fake:11434",
-    )
-
-    assert result["degraded"] is True
-    # сеть недоступна — сырого текста от модели нет, fallback на сам транскрипт
-    assert result["context"] == "транскрипт встречи"
-
-
-def test_summarize_ollama_retries_then_succeeds(monkeypatch):
-    responses = [
-        FakeResponse({"message": {"role": "assistant", "content": "мусор"}}),
-        FakeResponse(_ollama_payload(GOOD)),
+def test_normalize_fills_null_owner_and_coerces_types():
+    raw = {
+        "context": None,
+        "discussed": ["a", 5],
+        "decisions": None,
+        "action_items": [
+            {"task": "сделать отчёт", "owner": None, "deadline": None},
+            {"task": "созвон", "owner": "Аня", "deadline": 20260720, "extra": 1},
+            {"owner": "Боря"},
+            "мусор",
+        ],
+        "open_questions": [],
+    }
+    out = validate_followup(normalize_followup(raw))
+    assert out["context"] == ""
+    assert out["discussed"] == ["a", "5"]
+    assert out["decisions"] == []
+    assert out["action_items"] == [
+        {"task": "сделать отчёт", "owner": "не назначен", "deadline": None},
+        {"task": "созвон", "owner": "Аня", "deadline": "20260720"},
     ]
 
-    def fake_post(url, json=None, timeout=None):
-        return responses.pop(0)
 
-    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
-
-    result = summarize_ollama(
-        "транскрипт",
-        {"title": "Синк", "duration_min": 15},
-        model="test-model",
-        ollama_url="http://fake:11434",
-    )
-
-    assert result["degraded"] is False
-    assert result["context"] == GOOD["context"]
+def test_normalize_leaves_wrong_shape_for_validation_to_reject():
+    with pytest.raises(ValueError):
+        validate_followup(normalize_followup(["не", "объект"]))
 
 
-def test_summarize_ollama_map_reduce_triggers_on_long_transcript(monkeypatch):
-    long_transcript = "слово " * (MAP_REDUCE_CHUNK_CHARS // 6 + 1000)
-    assert len(long_transcript) > MAP_REDUCE_CHUNK_CHARS
-
-    calls = []
-
-    def fake_post(url, json=None, timeout=None):
-        calls.append(json)
-        return FakeResponse(_ollama_payload(GOOD))
-
-    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
-
-    result = summarize_ollama(
-        long_transcript,
-        {"title": "Долгая встреча", "duration_min": 180},
-        model="test-model",
-        ollama_url="http://fake:11434",
-    )
-
-    # минимум 2 map-чанка + 1 reduce-проход
-    assert len(calls) >= 3
-    assert result["degraded"] is False
-    for key in ("context", "discussed", "decisions", "action_items", "open_questions"):
-        assert result[key] == GOOD[key]
+# ─────────────────────────────── parse_followup ──────────────────────────────
 
 
-def test_summarize_ollama_map_reduce_degraded_partial_propagates(monkeypatch):
-    long_transcript = "слово " * (MAP_REDUCE_CHUNK_CHARS // 6 + 1000)
+def test_parse_followup_accepts_plain_and_fenced_json():
+    raw = json.dumps(GOOD, ensure_ascii=False)
+    assert parse_followup(raw) == GOOD
+    assert parse_followup("```json\n" + raw + "\n```") == GOOD
 
-    call_count = {"n": 0}
 
-    def fake_post(url, json=None, timeout=None):
-        call_count["n"] += 1
-        # первый map-чанк всегда невалиден (после ретраев деградирует),
-        # остальные вызовы (второй map-чанк + reduce) — валидны
-        if call_count["n"] <= 3:
-            return FakeResponse({"message": {"role": "assistant", "content": "плохой json"}})
-        return FakeResponse(_ollama_payload(GOOD))
+def test_parse_followup_normalizes_null_owner():
+    raw = json.dumps(dict(GOOD, action_items=[
+        {"task": "сделать", "owner": None, "deadline": None}]), ensure_ascii=False)
+    assert parse_followup(raw)["action_items"][0]["owner"] == "не назначен"
 
-    monkeypatch.setattr("daemon.ollama_client.requests.post", fake_post)
 
-    result = summarize_ollama(
-        long_transcript,
-        {"title": "Долгая встреча", "duration_min": 180},
-        model="test-model",
-        ollama_url="http://fake:11434",
-    )
+def test_parse_followup_rejects_garbage_with_reason():
+    with pytest.raises(ValueError, match="невалидный JSON"):
+        parse_followup("Вот фоллоу-ап: …")
 
-    # один из map-шагов деградировал → итог помечен как частично деградированный,
-    # даже если reduce-проход дал валидный JSON
-    assert result["degraded"] is True
+
+def test_parse_followup_rejects_wrong_schema():
+    with pytest.raises(ValueError):
+        parse_followup(json.dumps({"context": "x"}))
+
+
+# ─────────────────────────────── схема и промпт ──────────────────────────────
+
+
+def test_followup_schema_matches_manual_validation():
+    """JSON Schema для API и ручная validate_followup описывают одно и то же."""
+    assert set(FOLLOWUP_SCHEMA["properties"]) == FOLLOWUP_KEYS
+    assert set(FOLLOWUP_SCHEMA["required"]) == FOLLOWUP_KEYS
+    item = FOLLOWUP_SCHEMA["properties"]["action_items"]["items"]
+    assert set(item["required"]) == {"task", "owner", "deadline"}
+
+
+def test_build_prompt_contains_transcript_meta_and_schema():
+    prompt = build_prompt("Спикер 1: катим в пятницу",
+                          {"title": "Синк", "duration_min": 30})
+    assert "Спикер 1: катим в пятницу" in prompt
+    assert "«Синк»" in prompt and "30 минут" in prompt
+    assert '"action_items"' in prompt
+
+
+def test_build_prompt_gives_meeting_date_for_relative_deadlines():
+    """«Завтра», «к пятнице» модель переводит в даты только зная дату встречи
+    (через API текущей даты у неё нет)."""
+    from datetime import date
+    prompt = build_prompt("т", {"title": "Синк", "date": date(2026, 10, 12)})
+    assert "пн, 12.10.2026" in prompt
+    assert "Дата встречи" not in build_prompt("т", {"title": "Синк"})
