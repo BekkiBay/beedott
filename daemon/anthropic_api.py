@@ -23,10 +23,11 @@ from daemon.summarizer import (
 
 logger = logging.getLogger(__name__)
 
-MAX_TOKENS = 32000  # thinking + JSON; фоллоу-ап — единицы тысяч токенов
-# Явно: у Opus 5.5 дефолт medium (у Opus 5 был high), и medium на 5.5 уже
-# сильнее high на 5 — задаём, чтобы глубина не зависела от дефолта модели.
-EFFORT = "medium"
+# thinking + JSON. На high Opus 5.5 думает дольше, чем Opus 5, — запас,
+# чтобы длинная встреча не обрезалась на размышлениях (стриминг, таймаута нет).
+MAX_TOKENS = 64000
+# Явно: у Opus 5.5 дефолт medium (у Opus 5 был high); саммари — на high.
+EFFORT = "high"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 

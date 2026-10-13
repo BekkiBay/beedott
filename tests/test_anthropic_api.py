@@ -92,7 +92,7 @@ def test_returns_validated_followup_and_sends_expected_request(fake_sdk):
     assert TRANSCRIPT in req["messages"][0]["content"]
     assert req["thinking"] == {"type": "adaptive"}
     assert req["output_config"] == {
-        "effort": "medium",
+        "effort": "high",
         "format": {"type": "json_schema", "schema": FOLLOWUP_SCHEMA}}
     assert req["fallbacks"] == "default"
     assert req["betas"] == [anthropic_api.FALLBACK_BETA]
