@@ -1,11 +1,15 @@
-# MeetMind v2 — локальный auto-followupper для встреч
+<p align="center"><img src="docs/logo.png" width="160" alt="BeeDott"></p>
+
+# BeeDott — локальный auto-followupper для встреч
+
+> Бывший MeetMind. Новое имя видно в `/Applications/BeeDott.app`, Finder и уведомлениях;
+> внутренние пути (`~/MeetMind`, `~/Library/Application Support/MeetMind`), bundle id
+> и имена модулей пока прежние, чтобы не потерять данные и настройки.
 
 Локально (на твоём Mac) записывает встречи Zoom/Meet/Teams, транскрибирует
-аудио через MLX-Whisper, гонит транскрипт **одновременно через локальную
-LLM (Ollama Qwen2.5) и Claude API**, потом отправляет оба фоллоу-апа в
-Telegram + сохраняет в Markdown / Obsidian / Notion.
-
-Можно сравнивать качество движков и переключаться по ситуации.
+аудио через MLX-Whisper, собирает фоллоу-ап через **Claude Opus**
+(`claude -p` по Max-подписке или Anthropic API по ключу), потом отправляет
+его в Telegram + сохраняет в Markdown / Obsidian.
 
 ---
 
@@ -15,7 +19,7 @@ Telegram + сохраняет в Markdown / Obsidian / Notion.
 
 ```bash
 git clone <repo> && cd meetmind
-./setup_mac.sh                          # установит BlackHole, Ollama, модель, зависимости
+./setup_mac.sh                          # установит BlackHole и зависимости
 # заполнить .env (см. ниже)
 source .venv/bin/activate
 python main.py                          # стартует с menubar-иконкой
@@ -24,12 +28,12 @@ python main.py                          # стартует с menubar-иконк
 В `.env` минимально надо:
 
 ```env
-# Если есть Max-подписка (рекомендуется — Opus 4.7 без отдельной оплаты)
-USE_CLAUDE_CODE=true
+# Если есть Max-подписка (рекомендуется — Opus без отдельной оплаты)
+SUMMARY_BACKEND=claude_cli
 CLAUDE_CODE_MODEL=opus
 
 # ИЛИ через Anthropic API (отдельный биллинг)
-# USE_ANTHROPIC=true
+# SUMMARY_BACKEND=api
 # ANTHROPIC_API_KEY=sk-ant-...
 
 TELEGRAM_BOT_TOKEN=...                  # @BotFather
@@ -38,20 +42,18 @@ TELEGRAM_CHAT_ID=...                    # @userinfobot
 
 Остальное по желанию (Obsidian vault, Notion DB и т.д.) — см. `.env.example`.
 
-## Три варианта cloud-движка
+## Два способа вызвать Claude
 
-MeetMind поддерживает три способа использовать Claude:
+Саммари всегда делает Claude Opus. Способ — `SUMMARY_BACKEND` в `.env`:
 
-| Способ | Когда | Что нужно |
+| `SUMMARY_BACKEND` | Когда | Что нужно |
 |---|---|---|
-| **Claude Code CLI** | Есть Max-подписка | `claude` в PATH, авторизован в CLI |
-| **Anthropic API** | Нет Max, есть API-ключ | `ANTHROPIC_API_KEY=sk-ant-...` |
-| **Без cloud** | Только локально | `USE_CLAUDE_CODE=false`, `USE_ANTHROPIC=false` |
+| `claude_cli` (по умолчанию) | Есть Max-подписка | `claude` в PATH (или `MEETMIND_CLAUDE_BIN`), `claude login` |
+| `api` | Нет Max, есть API-ключ | `ANTHROPIC_API_KEY=sk-ant-...`, модель — `ANTHROPIC_MODEL` (`claude-opus-5`) |
 
-Claude Code CLI — рекомендуемый путь для Max-подписчиков: ты уже платишь
-$100-200/мес за Max, через CLI получаешь Opus 4.7 без отдельной оплаты
-токенов. Установка CLI: `npm install -g @anthropic-ai/claude-code` →
-`claude login`.
+Claude Code CLI — рекомендуемый путь для Max-подписчиков: через CLI получаешь
+Opus без отдельной оплаты токенов. Установка CLI:
+`npm install -g @anthropic-ai/claude-code` → `claude login`.
 
 ---
 
@@ -68,15 +70,12 @@ $100-200/мес за Max, через CLI получаешь Opus 4.7 без от
                                                        │
                                               сегменты транскрипта
                                                        │
-                          ┌────────────────────────────┼────────────────┐
-                          ▼                            ▼                ▼
-                  Ollama qwen2.5:14b             Claude Sonnet 4.5    (параллельно)
-                          │                            │
-                          └────────────┬───────────────┘
-                                       ▼
-                              FollowupResult{local, cloud}
-                                       │
-              ┌──────────────┬─────────┴──────┬───────────────┐
+                                                       ▼
+                                 Claude Opus (claude -p | Anthropic API)
+                                                       │
+                                              followup.json / .md
+                                                       │
+              ┌──────────────┬────────────────┬────────┴──────┐
               ▼              ▼                ▼               ▼
           Telegram      ~/MeetMind/      Obsidian vault    Notion DB
                         YYYY-MM-DD/
@@ -88,7 +87,7 @@ $100-200/мес за Max, через CLI получаешь Opus 4.7 без от
 |---|---|
 | `daemon/recorder.py` | sounddevice + Aggregate Device («MeetMind In» = BlackHole+Mic). Fallback на BlackHole, затем на дефолтный мик |
 | `daemon/transcriber.py` | MLX-Whisper large-v3 на Metal. Fallback на openai-whisper |
-| `daemon/summarizer.py` | Hybrid: Ollama (`/api/chat`) + Anthropic SDK параллельно через `ThreadPoolExecutor` |
+| `daemon/summarizer.py` | Промпт, JSON-схема и валидация фоллоу-апа; вызов — `daemon/claude_cli.py` (`claude -p`) или `daemon/anthropic_api.py` (Anthropic SDK) |
 | `daemon/sinks/markdown.py` | `~/MeetMind/2026-05-26/HHMM-title.md` |
 | `daemon/sinks/telegram.py` | python-telegram-bot v22 async. Шлёт два сообщения: 🖥 локальный + ☁ облачный |
 | `daemon/sinks/obsidian.py` | Markdown с frontmatter в твой vault |
@@ -140,33 +139,6 @@ open -a "Audio MIDI Setup"
 Если Aggregate не настроен — MeetMind напишет только системный звук
 (собеседников, без тебя). Если и BlackHole не установлен — только микрофон.
 
-## Какую локальную LLM использовать (май 2026)
-
-Дефолт: **Vikhr-Nemo 12B** — русский тюн поверх Mistral Nemo, 128K контекст,
-помещается в 7.5GB Q4. Идеально под M5 Pro 24GB рядом с Whisper.
-
-Альтернативы:
-- **Qwen3.5 14B** — свежий мейнстрим (Feb 2026), 9GB Q4
-- **T-pro 2.0 32B** (T-Bank) — peak русского качества, но требует
-  `sudo sysctl iogpu.wired_limit_mb=20480` чтобы влезть на 24GB
-- **Gemma 3 12B** — long-context champion от Google
-
-Полный разбор: см. [MODEL_GUIDE.md](./MODEL_GUIDE.md) — там подробное
-сравнение, цифры по памяти, как переключиться, как поднять GPU-лимит.
-
-## Сравнение Ollama vs Claude
-
-После каждой встречи в TG и .md-файле приходят **оба** варианта с пометками
-о движке и времени генерации. Глазами можно увидеть, где какой лучше:
-
-- Claude обычно сильнее на структурировании action items и нюансах
-- Vikhr-Nemo локально — приватность + бесплатно + знает русский колорит,
-  но иногда упускает детали на сложных встречах
-- На длинных встречах (1+ час) разница больше; на коротких — почти одинаково
-
-Если хочешь оставить только один движок — `USE_OLLAMA=false` или
-`USE_ANTHROPIC=false` в `.env`.
-
 ## Юридическое примечание
 
 Запись разговора без явного согласия собеседников может нарушать законы:
@@ -189,6 +161,17 @@ CA/FL/IL/MD/MA/MT/NV/NH/PA/WA. MeetMind хранит всё **только ло�
   Notion DB — новые страницы с заголовком встречи
 ```
 
+## Установка приложения
+
+```bash
+app/install.sh                 # собрать BeeDott.app и поставить в /Applications
+app/Tools/app_icon.sh          # перерисовать иконку (по умолчанию islandLetter), потом снова install.sh
+```
+
+`install.sh` не ставится, пока идёт запись или обработка (`FORCE=1` — всё
+равно). Путь к репо сохраняется в настройках приложения, демон стартует из
+репо и при запуске из `/Applications`. Автозапуск — через «Объекты входа».
+
 ## Запуск как сервис
 
 `launchd` plist можно положить в `~/Library/LaunchAgents/com.meetmind.plist`,
@@ -201,7 +184,6 @@ menubar это удобно. Для перезапуска просто `⌘Q` �
 - Diarization (определение кто говорит из аудио) пока не реализовано — имена
   спикеров берутся только из Firefox extension для Google Meet
 - Real-time транскрипция не делается — Whisper гоняется после записи
-- Длинная встреча (> 1 ч) на Qwen 14B может занять до 3-5 минут
 
 ## Лицензия
 

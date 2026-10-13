@@ -48,7 +48,7 @@ LOG_LEVEL=INFO
 - **ANTHROPIC_API_KEY** - ключ для Claude API (нужно добавить)
 - **SESSIONS_DIR** - где сохраняются записи встреч (по умолчанию `sessions/`)
 - **WEB_PORT** - порт для веб-интерфейса (по умолчанию 5000)
-- **TELEGRAM_BOT_TOKEN** и **TELEGRAM_CHAT_ID** - уже заполнены
+- **TELEGRAM_BOT_TOKEN** и **TELEGRAM_CHAT_ID** — заполнить своими
 
 ---
 
