@@ -49,7 +49,7 @@ TELEGRAM_CHAT_ID=...                    # @userinfobot
 | `SUMMARY_BACKEND` | Когда | Что нужно |
 |---|---|---|
 | `claude_cli` (по умолчанию) | Есть Max-подписка | `claude` в PATH (или `MEETMIND_CLAUDE_BIN`), `claude login` |
-| `api` | Нет Max, есть API-ключ | `ANTHROPIC_API_KEY=sk-ant-...`, модель — `ANTHROPIC_MODEL` (`claude-opus-5`) |
+| `api` | Нет Max, есть API-ключ | `ANTHROPIC_API_KEY=sk-ant-...`, модель — `ANTHROPIC_MODEL` (`claude-opus-5-5`) |
 
 Claude Code CLI — рекомендуемый путь для Max-подписчиков: через CLI получаешь
 Opus без отдельной оплаты токенов. Установка CLI:

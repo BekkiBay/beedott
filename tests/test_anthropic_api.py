@@ -26,7 +26,7 @@ def _text(text):
 
 def _message(content, stop_reason="end_turn", stop_details=None):
     return SimpleNamespace(content=content, stop_reason=stop_reason,
-                           stop_details=stop_details, model="claude-opus-5")
+                           stop_details=stop_details, model="claude-opus-5-5")
 
 
 class _FakeStream:
@@ -78,7 +78,7 @@ def fake_sdk(monkeypatch):
     sdk.Anthropic = Anthropic
     monkeypatch.setitem(sys.modules, "anthropic", sdk)
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "sk-test")
-    monkeypatch.setattr(config, "ANTHROPIC_MODEL", "claude-opus-5")
+    monkeypatch.setattr(config, "ANTHROPIC_MODEL", "claude-opus-5-5")
     return sdk
 
 
@@ -87,11 +87,12 @@ def test_returns_validated_followup_and_sends_expected_request(fake_sdk):
 
     assert fake_sdk.clients == [{"api_key": "sk-test"}]
     req = fake_sdk.requests[0]
-    assert req["model"] == "claude-opus-5"
+    assert req["model"] == "claude-opus-5-5"
     assert req["system"] == SYSTEM_PROMPT
     assert TRANSCRIPT in req["messages"][0]["content"]
     assert req["thinking"] == {"type": "adaptive"}
     assert req["output_config"] == {
+        "effort": "medium",
         "format": {"type": "json_schema", "schema": FOLLOWUP_SCHEMA}}
     assert req["fallbacks"] == "default"
     assert req["betas"] == [anthropic_api.FALLBACK_BETA]

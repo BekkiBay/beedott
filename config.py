@@ -81,7 +81,7 @@ CLAUDE_CODE_MODEL = os.getenv("CLAUDE_CODE_MODEL", "opus")
 
 # ── api ──
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 
 # ─── Транскрипция ───────────────────────────────────────────────────────────
 # tiny / base / small / medium / large / large-v3 / turbo

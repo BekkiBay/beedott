@@ -24,6 +24,9 @@ from daemon.summarizer import (
 logger = logging.getLogger(__name__)
 
 MAX_TOKENS = 32000  # thinking + JSON; фоллоу-ап — единицы тысяч токенов
+# Явно: у Opus 5.5 дефолт medium (у Opus 5 был high), и medium на 5.5 уже
+# сильнее high на 5 — задаём, чтобы глубина не зависела от дефолта модели.
+EFFORT = "medium"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
@@ -57,7 +60,10 @@ def summarize(
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": build_prompt(transcript, meta)}],
             thinking={"type": "adaptive"},
-            output_config={"format": {"type": "json_schema", "schema": FOLLOWUP_SCHEMA}},
+            output_config={
+                "effort": EFFORT,
+                "format": {"type": "json_schema", "schema": FOLLOWUP_SCHEMA},
+            },
             betas=[FALLBACK_BETA],
             fallbacks="default",
         ) as stream:

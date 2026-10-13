@@ -23,7 +23,7 @@ def session(tmp_path, monkeypatch):
     monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
     monkeypatch.setattr(stages, "_auth_notified", set())
     monkeypatch.setattr(config, "CLAUDE_CODE_MODEL", "opus")
-    monkeypatch.setattr(config, "ANTHROPIC_MODEL", "claude-opus-5")
+    monkeypatch.setattr(config, "ANTHROPIC_MODEL", "claude-opus-5-5")
     con = db.connect()
     sid = db.create_session(con, source="manual", title="Синк")
     for st in (State.RECORDING, State.RECORDED, State.TRANSCRIBING, State.TRANSCRIBED):
@@ -71,7 +71,7 @@ def test_api_backend(session, monkeypatch):
 
     stages.summarize(session)
 
-    assert _followup(session["id"])["engine"] == "anthropic-api:claude-opus-5"
+    assert _followup(session["id"])["engine"] == "anthropic-api:claude-opus-5-5"
 
 
 def test_unknown_backend_is_permanent(session, monkeypatch):
