@@ -61,6 +61,8 @@ def _setting(key: str) -> str:
 
 PROGRESS_EVERY_SEC = 0.5
 DISK_RESERVE = 300 * 2**20  # запас сверх размера модели
+# *.incomplete старше — брошены убитым процессом; свежие может писать другая загрузка.
+STALE_PARTIAL_SEC = 6 * 3600
 
 
 def _cached_file(repo: str, name: str) -> bool:
@@ -80,11 +82,14 @@ def _free_bytes(path: Path) -> int:
 
 def _remove_stale_partials(cache: Path, repo: str) -> None:
     """huggingface_hub 1.23 не докачивает: прерванный файл начинается заново, а
-    после SIGKILL в blobs/ остаются *.incomplete — убираем, чтобы не копились."""
+    после SIGKILL в blobs/ остаются *.incomplete — убираем старые, чтобы не
+    копились. Свежие не трогаем: их может писать параллельная загрузка."""
     blobs = cache / f"models--{repo.replace('/', '--')}" / "blobs"
     if blobs.is_dir():
+        cutoff = time.time() - STALE_PARTIAL_SEC
         for part in blobs.glob("*.incomplete"):
-            part.unlink(missing_ok=True)
+            if part.stat().st_mtime < cutoff:
+                part.unlink(missing_ok=True)
 
 
 def cmd_install_model(repo: str = MODEL_REPO) -> dict:
@@ -227,10 +232,14 @@ def cmd_telegram_check(token: str) -> dict:
     return {"bot": _tg(token, "getMe")["username"]}
 
 
-def cmd_telegram_connect(token: str) -> dict:
-    """Ждём /start от пользователя, запоминаем его чат, шлём тестовое сообщение."""
+def cmd_telegram_connect(token: str, code: str = "") -> dict:
+    """Ждём `/start <code>` — мастер открывает бота ссылкой t.me/<бот>?start=<code>
+    с одноразовым кодом, — запоминаем этот чат, шлём тестовое сообщение. Голый
+    /start не принимаем: в очереди бота может лежать /start чужого человека."""
     if not token:
         raise SetupError("invalid_token", "пустой токен")
+    if not code:
+        raise SetupError("internal", "нет одноразового кода подключения")
     deadline = time.monotonic() + CONNECT_WAIT_SEC
     offset = None
     while time.monotonic() < deadline:
@@ -241,7 +250,7 @@ def cmd_telegram_connect(token: str) -> dict:
         for update in _tg(token, "getUpdates", params, http_timeout=wait + 10):
             offset = update["update_id"] + 1
             message = update.get("message") or {}
-            if (message.get("text") or "").strip().startswith("/start"):
+            if (message.get("text") or "").split() == ["/start", code]:
                 chat_id = message["chat"]["id"]
                 _tg(token, "getUpdates", {"offset": offset, "timeout": 0})  # подтвердить
                 _tg(token, "sendMessage", {"chat_id": chat_id, "text": TELEGRAM_HELLO})
@@ -262,6 +271,8 @@ COMMANDS = {
 }
 # Команды, которым нужен секрет из stdin (первая строка).
 SECRET_COMMANDS = {"check-key", "telegram-check", "telegram-connect"}
+# Второй строкой stdin — одноразовый код из ссылки на бота.
+CODE_COMMANDS = {"telegram-connect"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -271,8 +282,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     name = argv[0]
     secret = sys.stdin.readline().strip() if name in SECRET_COMMANDS else None
+    extra = [sys.stdin.readline().strip()] if name in CODE_COMMANDS else []
     try:
-        result = COMMANDS[name](secret) if name in SECRET_COMMANDS else COMMANDS[name]()
+        result = COMMANDS[name](secret, *extra) if name in SECRET_COMMANDS else COMMANDS[name]()
     except Exception as exc:  # noqa: BLE001 — любой сбой → событие error для мастера
         code = exc.code if isinstance(exc, SetupError) else _classify(exc)
         message = str(exc) if isinstance(exc, SetupError) else _last_line(exc)

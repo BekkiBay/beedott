@@ -60,10 +60,24 @@ enum RuntimeLogic {
                             uvCandidates: [String], commandOverride: [String]?,
                             isRepo: (String) -> Bool,
                             isExecutable: (String) -> Bool) -> RuntimeMode {
-        let repo = [savedRepo, envRepo, derivedRepo].compactMap { $0 }.first(where: isRepo)
-        guard let repo, let uv = uvCandidates.first(where: isExecutable) else { return .bundled }
-        let command = commandOverride.flatMap { $0.isEmpty ? nil : $0 } ?? [uv, "run", "python", "main.py"]
-        return .dev(repo: repo, uv: uv, command: command)
+        guard let repo = [savedRepo, envRepo, derivedRepo].compactMap({ $0 }).first(where: isRepo)
+        else { return .bundled }
+        let uv = uvCandidates.first(where: isExecutable)
+        // Своя команда демона (defaults daemonCommand) работает и с uv вне типовых мест.
+        if let command = commandOverride, !command.isEmpty {
+            return .dev(repo: repo, uv: uv ?? command[0], command: command)
+        }
+        guard let uv else { return .bundled }
+        return .dev(repo: repo, uv: uv, command: [uv, "run", "python", "main.py"])
+    }
+
+    /// Задачи демона, которые реально идут или ждут (status.queue: строки
+    /// {stage, status, n}). failed/failed_retry/skipped не считаем — иначе
+    /// «дождаться простоя» не наступит никогда.
+    static func activeJobs(_ queueRows: [[String: Any]]) -> Int {
+        queueRows
+            .filter { ["pending", "queued", "running"].contains($0["status"] as? String ?? "") }
+            .reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
     }
 
     /// Запуск прямо из Загрузок: macOS исполняет копию из read-only пути.

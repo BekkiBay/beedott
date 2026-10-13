@@ -22,6 +22,13 @@ final class RuntimeManager: @unchecked Sendable {
     private let fm = FileManager.default
     private let lock = NSLock()
     private var children: [Process] = []
+    /// Один uv sync за раз (мастер и супервизор после обновления приложения).
+    private let syncLock = NSLock()
+
+    private init() {
+        // Запись секрета в stdin процесса, который уже вышел, — SIGPIPE убил бы приложение.
+        signal(SIGPIPE, SIG_IGN)
+    }
 
     var runtimeDir: URL { ControlClient.appSupportDir.appendingPathComponent("runtime") }
     var binDir: URL { runtimeDir.appendingPathComponent("bin") }
@@ -191,7 +198,7 @@ final class RuntimeManager: @unchecked Sendable {
         }
         track(p)
         defer { untrack(p) }
-        if let secret { input.fileHandleForWriting.write(Data((secret + "\n").utf8)) }
+        if let secret { try? input.fileHandleForWriting.write(contentsOf: Data((secret + "\n").utf8)) }
         try? input.fileHandleForWriting.close()
         // stderr (предупреждения HF, вывод uv run) — в лог, не в поток событий.
         let errDone = DispatchSemaphore(value: 0)
@@ -215,6 +222,8 @@ final class RuntimeManager: @unchecked Sendable {
     /// bundled: копия uv без карантина → `uv sync` → link-ffmpeg → lock.sha.
     /// onLine — строки вывода uv. nil — успех, иначе текст ошибки (хвост вывода).
     func syncRuntime(onLine: @escaping (String) -> Void) -> String? {
+        syncLock.lock()
+        defer { syncLock.unlock() }
         guard let backendDir, let bundledUv else {
             return "в приложении нет компонентов — сборка без Resources/backend"
         }

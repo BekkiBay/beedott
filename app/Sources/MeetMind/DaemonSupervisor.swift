@@ -64,53 +64,70 @@ final class DaemonSupervisor: ObservableObject {
     }
 
     private func bootstrap() {
-        if (try? ControlClient.health()) != nil {
-            log("health() ok на старте — демон уже запущен снаружи, супервизор только поллит")
-            setState(.healthy)
-            startPolling()
-            return
-        }
         let runtime = RuntimeManager.shared
+        if (try? ControlClient.health()) != nil {
+            // Демон от прошлой версии приложения (оно упало и оставило его) на
+            // старом venv — просим выйти, чтобы обновить компоненты и запустить свой.
+            if !(runtime.needsSync && runtime.hasRuntime && shutdownExternalDaemon()) {
+                log("health() ok на старте — демон уже запущен снаружи, супервизор только поллит")
+                setState(.healthy)
+                startPolling()
+                return
+            }
+        }
         guard runtime.hasRuntime else {
             log("рантайм не установлен — жду мастер первичной настройки")
             setState(.notInstalled)
             return
         }
-        if runtime.needsSync {
-            log("uv.lock приложения изменился — обновляю компоненты")
-            setState(.updating)
-            if let failure = runtime.syncRuntime(onLine: { _ in }) {
-                log("обновление компонентов не удалось: \(failure)")
-                setState(.updateFailed(failure))
-                return
-            }
-        }
         spawnProcess()
         startPolling()
+    }
+
+    /// Просит демон, запущенный не нами, завершиться (control-метод shutdown) и
+    /// ждёт, пока сокет замолчит. false — не вышло (старый демон без shutdown,
+    /// идёт запись).
+    private func shutdownExternalDaemon() -> Bool {
+        do {
+            try ControlClient.request("shutdown")
+        } catch {
+            log("демон снаружи не остановился: \(error.localizedDescription)")
+            return false
+        }
+        let deadline = Date().addingTimeInterval(Self.terminateGrace)
+        while Date() < deadline {
+            if (try? ControlClient.health()) == nil { return true }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        log("демон снаружи не завершился за \(Self.terminateGrace)с")
+        return false
     }
 
     /// Мастер поставил рантайм — запустить демон, если ещё не запущен.
     func runtimeReady() {
         workQueue.async { [weak self] in
-            guard let self, self.process?.isRunning != true else { return }
+            guard let self, self.process?.isRunning != true, !self.isRestarting else { return }
             self.spawnProcess()
             self.startPolling()
         }
     }
 
-    /// Перезапуск, чтобы демон перечитал config.env. false — демон запущен не нами.
-    @discardableResult
-    func restart() -> Bool {
-        guard weSpawned else { return false }
+    /// Перезапуск, чтобы демон перечитал config.env. Демон, запущенный не нами
+    /// (остался от упавшего приложения), просим выйти через control-метод shutdown.
+    func restart() {
         workQueue.async { [weak self] in
             // Рестарт по backoff уже запланирован — новый процесс и так прочитает config.env.
             guard let self, !self.isRestarting else { return }
             self.log("перезапуск демона: новые настройки")
-            self.terminateProcessGracefully()
+            if self.weSpawned {
+                self.terminateProcessGracefully()
+            } else if !self.shutdownExternalDaemon() {
+                return
+            }
             self.consecutiveMisses = 0
             self.spawnProcess()
+            self.startPolling()
         }
-        return true
     }
 
     private func startPolling() {
@@ -180,7 +197,19 @@ final class DaemonSupervisor: ObservableObject {
     }
 
     private func spawnProcess() {
-        guard let launch = RuntimeManager.shared.daemonLaunch() else {
+        let runtime = RuntimeManager.shared
+        // После обновления приложения (и перед рестартом по backoff) — сначала
+        // компоненты под новый uv.lock, иначе новый main.py упадёт на старом venv.
+        if runtime.hasRuntime && runtime.needsSync {
+            log("uv.lock приложения изменился — обновляю компоненты")
+            setState(.updating)
+            if let failure = runtime.syncRuntime(onLine: { _ in }) {
+                log("обновление компонентов не удалось: \(failure)")
+                setState(.updateFailed(failure))
+                return
+            }
+        }
+        guard let launch = runtime.daemonLaunch() else {
             spawnFailed("рантайм демона не установлен — пройди первичную настройку")
             setState(.notInstalled)
             return

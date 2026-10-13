@@ -5,7 +5,9 @@ control-server = asyncio-thread (своё подключение). Recorder — 
 """
 import json
 import logging
+import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -523,6 +525,17 @@ class DaemonApp:
     def health(self, params: dict) -> dict:
         return {"ok": True, "version": "3.0.0"}
 
+    def shutdown(self, params: dict) -> dict:
+        """Завершить демон по просьбе приложения: оно перезапускает демон с новым
+        config.env, а демон, оставшийся от упавшего приложения, — не его child,
+        SIGTERM ему не послать. Во время записи отказываем."""
+        with self._lock:
+            if self._active_sid is not None:
+                raise ControlError("busy", "идёт запись — демон не останавливаем")
+        # Ответ должен уйти до выхода — SIGTERM чуть позже.
+        threading.Timer(0.3, os.kill, args=(os.getpid(), signal.SIGTERM)).start()
+        return {"ok": True}
+
     # ------------------------------------------- предохранители owner=app (T7)
 
     def guard_tick(self) -> None:
@@ -598,6 +611,7 @@ class DaemonApp:
             "notifications_pop": self.notifications_pop,
             "import_audio": self.import_audio,
             "health": self.health,
+            "shutdown": self.shutdown,
         }
 
     def startup(self, con) -> None:

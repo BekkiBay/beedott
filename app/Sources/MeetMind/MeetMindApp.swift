@@ -56,6 +56,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var activeJobs: Int = 0
     static let setupCompletedKey = "setupCompleted"
     private var pendingDaemonRestart = false
+    /// Первая настройка не пройдена, а супервизор обновляет компоненты — проверить
+    /// настройку, когда он закончит (иначе мастер после прерванной установки не откроется).
+    private var setupCheckAfterUpdate = false
 
     // --- данные для DropdownView / Библиотеки (экраны 02, 05-06)
     @Published private(set) var recordingTitle: String? = nil
@@ -138,6 +141,18 @@ final class AppModel: ObservableObject {
     }
 
     private func handleSupervisorState(_ state: DaemonSupervisor.RunState) {
+        if setupCheckAfterUpdate {
+            switch state {
+            case .healthy:
+                setupCheckAfterUpdate = false
+                checkSetupOnLaunch()
+            case .updateFailed:
+                setupCheckAfterUpdate = false
+                SetupWindow.show(status: nil)
+            default:
+                break
+            }
+        }
         switch state {
         case .healthy:
             runtimeNote = nil // статус-поллинг (3с) сам подтвердит через daemonHealthy
@@ -170,8 +185,14 @@ final class AppModel: ObservableObject {
     /// настроенном Mac — молча отмечаем настройку пройденной.
     private func checkSetupOnLaunch() {
         let runtime = RuntimeManager.shared
-        // Рантайм есть, но обновляется (uv sync в супервизоре) — не мешаем.
-        guard !runtime.needsSync || !runtime.hasRuntime else { return }
+        if runtime.hasRuntime && runtime.needsSync {
+            // Супервизор обновляет компоненты (uv sync) — не мешаем. Если первая
+            // настройка не пройдена (установку прервали), проверим после него.
+            if !UserDefaults.standard.bool(forKey: AppModel.setupCompletedKey) {
+                setupCheckAfterUpdate = true
+            }
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             var status: SetupStatus?
             if runtime.hasRuntime, case .ok(let r) = runtime.runSetup("status") { status = SetupStatus(r) }
@@ -197,10 +218,24 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Мастер сохранил ключ/Telegram во время записи или обработки — демон
-    /// перезапустим, когда всё закончится (см. статус-поллинг).
-    func restartDaemonWhenIdle() {
-        pendingDaemonRestart = true
+    /// Мастер сохранил ключ/Telegram — перезапустить демон, чтобы он перечитал
+    /// config.env. Решаем по свежему статусу демона (не по поллингу трёхсекундной
+    /// давности): во время записи или обработки — отложить до простоя.
+    func applyNewSettings(_ done: @escaping @MainActor (String?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let status = try? ControlClient.status()
+            let recording = status?["recording"] as? String
+            let active = RuntimeLogic.activeJobs((status?["queue"] as? [[String: Any]]) ?? [])
+            Task { @MainActor in
+                if recording != nil || active > 0 {
+                    self.pendingDaemonRestart = true
+                    done("Применится после текущей встречи")
+                } else {
+                    self.supervisor.restart()
+                    done(nil)
+                }
+            }
+        }
     }
 
     private func registerHotKeys() {
@@ -300,9 +335,7 @@ final class AppModel: ObservableObject {
                     .flatMap { ISO8601DateFormatter().date(from: $0) }
                 let queueRows = (result["queue"] as? [[String: Any]]) ?? []
                 let queueTotal = queueRows.reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
-                let activeTotal = queueRows
-                    .filter { ["pending", "queued", "running"].contains($0["status"] as? String ?? "") }
-                    .reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
+                let activeTotal = RuntimeLogic.activeJobs(queueRows)
                 let lastError = result["last_error"] as? [String: Any]
                 let errText = lastError.flatMap { $0["last_error"] as? String }
                 // Свежий список встреч тем же заходом (дропдаун: последние 3 +

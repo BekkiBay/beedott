@@ -121,7 +121,7 @@ stdin, никогда в argv (видно в `ps`).
 | `link-ffmpeg` | симлинк `runtime/bin/ffmpeg` | `{"ffmpeg": path}` |
 | `check-key` | stdin: ключ. `anthropic.Anthropic(api_key=…).models.list(limit=1)`; успех → `update_config_env` для `ANTHROPIC_API_KEY` и `SUMMARY_BACKEND=api` | `{}` |
 | `telegram-check` | stdin: токен. `getMe` | `{"bot": "username"}` |
-| `telegram-connect` | stdin: токен. Цикл `getUpdates(timeout=50)` до общего лимита 120 с, ждёт сообщение `/start`, берёт `chat.id`, подтверждает `getUpdates(offset=last+1)`, шлёт «BeeDott подключён ✓», пишет `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. 409 (у бота webhook или другой поллер) → `bot_busy` | `{"chat_id": int}` |
+| `telegram-connect` | stdin: токен, второй строкой — одноразовый код. Мастер открывает бота ссылкой `t.me/<бот>?start=<код>`; цикл `getUpdates(timeout=50)` до общего лимита 120 с ждёт ровно `/start <код>` (чужой `/start` из очереди бота не принимается), берёт `chat.id`, подтверждает `getUpdates(offset=last+1)`, шлёт «BeeDott подключён ✓», пишет `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. 409 (у бота webhook или другой поллер) → `bot_busy` | `{"chat_id": int}` |
 
 `summary` в `status`: `"api"`, если `SUMMARY_BACKEND=api` и ключ непустой;
 `"claude_cli"`, если `SUMMARY_BACKEND` = `claude_cli` или не задан (дефолт кода)
@@ -144,7 +144,7 @@ stdin, никогда в argv (видно в `ps`).
 - **`DaemonSupervisor`** — команду и cwd берёт у `RuntimeManager`. Пока рантайм
   не установлен — не спавнит, состояние `.notInstalled`. Новое `restart()` для
   применения настроек; если демон запущен снаружи (`weSpawned == false`),
-  перезапустить его нельзя — мастер пишет «Перезапусти демон, чтобы применить».
+  супервизор просит его выйти control-методом `shutdown` (демон отказывает во время записи) и запускает свой.
   Из `.notInstalled` супервизор выходит по вызову `runtimeReady()`: его делает
   мастер после успешного `uv sync` + `link-ffmpeg` (до скачивания модели —
   демону модель нужна только к первой расшифровке).

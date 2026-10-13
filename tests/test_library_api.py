@@ -298,6 +298,33 @@ def test_ensure_tool_path_puts_runtime_bin_first(monkeypatch, tmp_path):
     assert os.environ["PATH"].split(":").count(str(tmp_path / "runtime" / "bin")) == 1
 
 
+def test_shutdown_terminates_self_when_idle(app, monkeypatch):
+    """Приложение перезапускает демон, оставшийся от упавшего приложения (не его
+    child): демон по запросу завершает сам себя SIGTERM-ом."""
+    import signal
+    import threading
+    calls = []
+
+    class Timer:
+        def __init__(self, delay, fn, args=()):
+            calls.append((fn, args))
+
+        def start(self):
+            pass
+    monkeypatch.setattr(threading, "Timer", Timer)
+    assert app.shutdown({}) == {"ok": True}
+    fn, args = calls[0]
+    assert args[1] == signal.SIGTERM
+
+
+def test_shutdown_refused_while_recording(app):
+    from daemon.control import ControlError
+    app._active_sid = "abc"
+    with pytest.raises(ControlError) as err:
+        app.shutdown({})
+    assert err.value.code == "busy"
+
+
 # ───────────── reprocess во время failed_retry (кнопка «Повторить») ──────────
 
 

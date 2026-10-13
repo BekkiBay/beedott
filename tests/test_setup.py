@@ -118,8 +118,8 @@ def fake_anthropic(monkeypatch, exc=None):
     monkeypatch.setattr(anthropic, "Anthropic", Client)
 
 
-def run_with_stdin(monkeypatch, argv, text):
-    monkeypatch.setattr("sys.stdin", io.StringIO(text + "\n"))
+def run_with_stdin(monkeypatch, argv, text, *more_lines):
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join([text, *more_lines]) + "\n"))
     return setup.main(argv)
 
 
@@ -212,15 +212,18 @@ def test_telegram_network_error_hides_token(appdir, capsys, monkeypatch):
 
 
 def test_telegram_connect_waits_for_start(appdir, capsys, monkeypatch):
-    start = {"update_id": 7, "message": {"text": "/start", "chat": {"id": 555}}}
+    """Принимаем только /start с одноразовым кодом из ссылки мастера: чужой
+    /start из очереди бота (бот уже кем-то запущен) чат не привязывает."""
+    start = {"update_id": 7, "message": {"text": "/start k3y9", "chat": {"id": 555}}}
+    stranger = {"update_id": 5, "message": {"text": "/start", "chat": {"id": 2}}}
     other = {"update_id": 6, "message": {"text": "привет", "chat": {"id": 1}}}
     tg = fake_tg(monkeypatch, {
         "getUpdates": [(200, {"ok": True, "result": []}),
-                       (200, {"ok": True, "result": [other, start]}),
+                       (200, {"ok": True, "result": [stranger, other, start]}),
                        (200, {"ok": True, "result": []})],
         "sendMessage": [(200, {"ok": True, "result": {}})],
     })
-    assert run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc") == 0
+    assert run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc", "k3y9") == 0
     assert events(capsys)[-1] == {"event": "ok", "chat_id": 555}
     ack = [p for m, p in tg.calls if m == "getUpdates"][-1]
     assert ack["offset"] == 8
@@ -235,14 +238,19 @@ def test_telegram_connect_timeout(appdir, capsys, monkeypatch):
     clock = itertools.chain([0, 0, 0], itertools.repeat(200))
     monkeypatch.setattr(setup.time, "monotonic", lambda: next(clock))
     fake_tg(monkeypatch, {"getUpdates": [(200, {"ok": True, "result": []})]})
-    run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc")
+    run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc", "k3y9")
     assert events(capsys)[-1]["code"] == "timeout"
 
 
 def test_telegram_connect_bot_busy(appdir, capsys, monkeypatch):
     fake_tg(monkeypatch, {"getUpdates": [(409, {"ok": False, "description": "Conflict: webhook"})]})
-    run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc")
+    run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc", "k3y9")
     assert events(capsys)[-1]["code"] == "bot_busy"
+
+
+def test_telegram_connect_requires_code(appdir, capsys, monkeypatch):
+    run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc")
+    assert events(capsys)[-1]["event"] == "error"
 
 
 def fake_hub(monkeypatch, tmp_path, sizes, cached=()):
@@ -297,13 +305,23 @@ def test_install_model_reports_progress(appdir, capsys, monkeypatch, tmp_path):
 
 
 def test_install_model_removes_stale_incomplete(appdir, capsys, monkeypatch, tmp_path):
+    """Старые *.incomplete (процесс убит) — удаляем; свежие не трогаем: их может
+    прямо сейчас писать другая загрузка."""
+    import os
+    import time as _time
     fake_hub(monkeypatch, tmp_path, {"weights.safetensors": 10})
     blobs = tmp_path / "hub" / "models--mlx-community--whisper-large-v3-turbo" / "blobs"
     blobs.mkdir(parents=True)
-    (blobs / "abc.123.incomplete").write_bytes(b"x" * 5)
+    stale = blobs / "abc.123.incomplete"
+    stale.write_bytes(b"x" * 5)
+    old = _time.time() - setup.STALE_PARTIAL_SEC - 60
+    os.utime(stale, (old, old))
+    fresh = blobs / "abc.456.incomplete"
+    fresh.write_bytes(b"z")
     (blobs / "done-blob").write_bytes(b"y")
     setup.main(["install-model"])
-    assert not (blobs / "abc.123.incomplete").exists()
+    assert not stale.exists()
+    assert fresh.exists()
     assert (blobs / "done-blob").exists()
 
 

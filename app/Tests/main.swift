@@ -284,6 +284,11 @@ do {
     check(mode(saved: repo, uvs: []) == .bundled, "репо без uv → bundled")
     check(mode() == .bundled, "чистый Mac → bundled")
     check(mode(saved: repo, override: ["/x/python", "main.py"]) == .dev(repo: repo, uv: uv, command: ["/x/python", "main.py"]), "daemonCommand из настроек")
+    check(mode(saved: repo, uvs: [], override: ["/opt/uv", "run", "python", "main.py"])
+          == .dev(repo: repo, uv: "/opt/uv", command: ["/opt/uv", "run", "python", "main.py"]), "daemonCommand без найденного uv")
+    let rows: [[String: Any]] = [["status": "running", "n": 1], ["status": "failed", "n": 3],
+                                 ["status": "queued", "n": 2], ["status": "failed_retry", "n": 1]]
+    check(RuntimeLogic.activeJobs(rows) == 3, "активные задачи без failed")
 }
 
 // 22. RuntimeLogic: транслокация, хэш, обновление рантайма, тексты ошибок.

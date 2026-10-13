@@ -45,6 +45,9 @@ final class SetupModel: ObservableObject {
     @Published var tokenPhase: Phase = .idle
     @Published var connectPhase: Phase = .idle
     @Published var telegramConfigured = false
+    /// Одноразовый код из ссылки t.me/<бот>?start=<код>: daemon.setup принимает
+    /// только этот /start, а не первый попавшийся из очереди бота.
+    private var connectCode = ""
     // применение настроек
     @Published var applyNote: String?
 
@@ -64,6 +67,11 @@ final class SetupModel: ObservableObject {
 
     var speechReady: Bool { runtimePhase == .done && modelPhase == .done }
     var summaryReady: Bool { summaryMode != nil && !replacingKey }
+    /// Идёт фоновая работа — при повторном открытии окна модель переиспользуется,
+    /// иначе вторая загрузка/второй getUpdates столкнулись бы с первыми.
+    var isBusy: Bool {
+        [runtimePhase, modelPhase, keyPhase, tokenPhase, connectPhase].contains(.running)
+    }
 
     // MARK: шаг 1
 
@@ -172,18 +180,26 @@ final class SetupModel: ObservableObject {
         }
     }
 
+    /// Открыть бота ссылкой с кодом: в Telegram появится «Запустить», и бот
+    /// получит `/start <код>`.
     func openBot() {
-        guard let botName else { return }
-        if let tg = URL(string: "tg://resolve?domain=\(botName)"), NSWorkspace.shared.open(tg) { return }
-        if let web = URL(string: "https://t.me/\(botName)") { NSWorkspace.shared.open(web) }
+        guard let botName, !connectCode.isEmpty else { return }
+        if let tg = URL(string: "tg://resolve?domain=\(botName)&start=\(connectCode)"),
+           NSWorkspace.shared.open(tg) { return }
+        if let web = URL(string: "https://t.me/\(botName)?start=\(connectCode)") {
+            NSWorkspace.shared.open(web)
+        }
     }
 
     func connectTelegram() {
         let token = botToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard connectPhase != .running else { return }
+        guard connectPhase != .running, botName != nil else { return }
+        connectCode = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))
+        let code = connectCode
         connectPhase = .running
+        openBot()
         queue.async { [runtime] in
-            let result = runtime.runSetup("telegram-connect", stdin: token)
+            let result = runtime.runSetup("telegram-connect", stdin: token + "\n" + code)
             Task { @MainActor in
                 if case .error(let code, let message) = result {
                     self.connectPhase = .failed(RuntimeLogic.setupErrorText(code: code, message: message))
@@ -200,15 +216,7 @@ final class SetupModel: ObservableObject {
     // MARK: общее
 
     private func applySettings() {
-        let app = AppModel.shared
-        if app.recordingSessionId != nil || app.activeJobs > 0 {
-            app.restartDaemonWhenIdle()
-            applyNote = "Применится после текущей встречи"
-        } else if !app.supervisor.restart() {
-            applyNote = "Перезапусти демон, чтобы применить"
-        } else {
-            applyNote = nil
-        }
+        AppModel.shared.applyNewSettings { note in self.applyNote = note }
     }
 
     func next() {
@@ -500,16 +508,20 @@ private struct TelegramStepView: View {
                     Text(text).font(.system(size: 12)).foregroundStyle(Theme.recordingRed(scheme))
                 }
                 if let bot = model.botName {
-                    Text("2. Открой @\(bot) и нажми «Запустить» (/start).")
+                    Text("2. Нажми «Подключить» — откроется @\(bot), там нажми «Запустить».")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.textSecondary(scheme))
                     HStack {
-                        Button("Открыть @\(bot)") { model.openBot() }
-                        Button(model.connectPhase == .running ? "Жду /start…" : "Я нажал /start") {
-                            model.connectTelegram()
+                        if model.connectPhase == .running {
+                            ProgressView().controlSize(.small)
+                            Text("Жду «Запустить» в Telegram…").font(.system(size: 12))
+                            Button("Открыть ещё раз") { model.openBot() }
+                        } else {
+                            Button(model.connectPhase == .idle ? "Подключить @\(bot)" : "Ещё раз") {
+                                model.connectTelegram()
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .disabled(model.connectPhase == .running)
-                        if model.connectPhase == .running { ProgressView().controlSize(.small) }
                     }
                     if case .failed(let text) = model.connectPhase {
                         Text(text).font(.system(size: 12)).foregroundStyle(Theme.recordingRed(scheme))
@@ -560,9 +572,18 @@ private struct DoneStepView: View {
 @MainActor
 enum SetupWindow {
     private static var controller: NSWindowController?
+    private static var current: SetupModel?
 
     static func show(status: SetupStatus?) {
+        // Закрыли окно посреди установки и открыли снова — показываем ту же модель:
+        // новая запустила бы вторую загрузку параллельно первой.
+        if let current, current.isBusy {
+            NSApp.activate(ignoringOtherApps: true)
+            controller?.showWindow(nil)
+            return
+        }
         let model = SetupModel(status: status)
+        current = model
         if controller == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 460),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
