@@ -14,8 +14,10 @@ Anthropic, токен бота) приходят только через stdin �
 import errno
 import json
 import os
+import shutil
 import sys
 import time
+from pathlib import Path
 
 # hf-xet обновляет tqdm-бар один раз в конце загрузки — прогресса в мастере не
 # было бы. По HTTP бар растёт шагами по 10 МБ. Должно стоять до импорта
@@ -57,14 +59,80 @@ def _setting(key: str) -> str:
     return (os.environ.get(key) or values.get(key) or "").strip()
 
 
+PROGRESS_EVERY_SEC = 0.5
+DISK_RESERVE = 300 * 2**20  # запас сверх размера модели
+
+
+def _cached_file(repo: str, name: str) -> bool:
+    from huggingface_hub import try_to_load_from_cache
+    return isinstance(try_to_load_from_cache(repo, name), str)
+
+
 def model_cached(repo: str = MODEL_REPO) -> bool:
     """Модель целиком в кэше HF: config.json и веса. Офлайн, сеть не трогает."""
-    from huggingface_hub import try_to_load_from_cache
+    return _cached_file(repo, "config.json") and any(_cached_file(repo, w) for w in WEIGHT_FILES)
 
-    def cached(name: str) -> bool:
-        return isinstance(try_to_load_from_cache(repo, name), str)
 
-    return cached("config.json") and any(cached(w) for w in WEIGHT_FILES)
+def _free_bytes(path: Path) -> int:
+    path.mkdir(parents=True, exist_ok=True)
+    return shutil.disk_usage(path).free
+
+
+def _remove_stale_partials(cache: Path, repo: str) -> None:
+    """huggingface_hub 1.23 не докачивает: прерванный файл начинается заново, а
+    после SIGKILL в blobs/ остаются *.incomplete — убираем, чтобы не копились."""
+    blobs = cache / f"models--{repo.replace('/', '--')}" / "blobs"
+    if blobs.is_dir():
+        for part in blobs.glob("*.incomplete"):
+            part.unlink(missing_ok=True)
+
+
+def cmd_install_model(repo: str = MODEL_REPO) -> dict:
+    import huggingface_hub
+    import tqdm
+    from huggingface_hub import constants
+
+    cache = Path(constants.HF_HUB_CACHE)
+    files = [(s.rfilename, s.size or 0)
+             for s in huggingface_hub.HfApi().model_info(repo, files_metadata=True).siblings]
+    total = sum(size for _, size in files)
+    todo = [(name, size) for name, size in files if not _cached_file(repo, name)]
+    need = sum(size for _, size in todo)
+    free = _free_bytes(cache)
+    if todo and free < need + DISK_RESERVE:
+        raise SetupError("disk_full",
+                         f"нужно ещё {(need + DISK_RESERVE - free) / 2**30:.1f} ГБ")
+    _remove_stale_partials(cache, repo)
+
+    state = {"before": total - need, "last": None}
+
+    def report(current: int, force: bool = False) -> None:
+        now = time.monotonic()
+        if force or state["last"] is None or now - state["last"] >= PROGRESS_EVERY_SEC:
+            state["last"] = now
+            emit("progress", stage="model", done=state["before"] + current, total=total)
+
+    devnull = open(os.devnull, "w")  # noqa: SIM115 — живёт до конца процесса
+
+    class Bar(tqdm.tqdm):
+        # Обычный tqdm, не huggingface_hub.utils.tqdm: тот без терминала
+        # выключается (disable=None), и n не растёт.
+        def __init__(self, *args, **kwargs):
+            kwargs["disable"] = False
+            kwargs["file"] = devnull
+            super().__init__(*args, **kwargs)
+
+        def update(self, n=1):
+            out = super().update(n)
+            report(self.n)
+            return out
+
+    report(0, force=True)
+    for name, size in todo:
+        huggingface_hub.hf_hub_download(repo, name, tqdm_class=Bar)
+        state["before"] += size
+    report(0, force=True)
+    return {"model": repo}
 
 
 def cmd_status() -> dict:
@@ -172,6 +240,7 @@ def cmd_telegram_connect(token: str) -> dict:
 
 COMMANDS = {
     "status": cmd_status,
+    "install-model": cmd_install_model,
     "check-key": cmd_check_key,
     "telegram-check": cmd_telegram_check,
     "telegram-connect": cmd_telegram_connect,

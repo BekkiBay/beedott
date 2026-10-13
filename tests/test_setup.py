@@ -243,3 +243,87 @@ def test_telegram_connect_bot_busy(appdir, capsys, monkeypatch):
     fake_tg(monkeypatch, {"getUpdates": [(409, {"ok": False, "description": "Conflict: webhook"})]})
     run_with_stdin(monkeypatch, ["telegram-connect"], "1:abc")
     assert events(capsys)[-1]["code"] == "bot_busy"
+
+
+def fake_hub(monkeypatch, tmp_path, sizes, cached=()):
+    """Подмена huggingface_hub: model_info с размерами, hf_hub_download, который
+    двигает переданный tqdm_class шагами по 10 байт."""
+    import huggingface_hub
+    from huggingface_hub import constants
+    monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+
+    class Sibling:
+        def __init__(self, name, size):
+            self.rfilename, self.size = name, size
+
+    class Info:
+        siblings = [Sibling(n, s) for n, s in sizes.items()]
+
+    class Api:
+        def model_info(self, repo, files_metadata=False):
+            assert files_metadata
+            return Info()
+
+    downloaded = []
+
+    def download(repo, filename, tqdm_class=None):
+        bar = tqdm_class(total=sizes[filename])
+        for _ in range(sizes[filename] // 10):
+            bar.update(10)
+        bar.close()
+        downloaded.append(filename)
+        return str(tmp_path / filename)
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", Api)
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
+    monkeypatch.setattr(setup, "_cached_file", lambda repo, name: name in cached)
+    return downloaded
+
+
+def test_install_model_reports_progress(appdir, capsys, monkeypatch, tmp_path):
+    ticks = iter(range(0, 10_000))
+    monkeypatch.setattr(setup.time, "monotonic", lambda: next(ticks) * 0.3)
+    downloaded = fake_hub(monkeypatch, tmp_path, {"config.json": 10, "weights.safetensors": 100},
+                          cached={"config.json"})
+    assert setup.main(["install-model"]) == 0
+    evs = events(capsys)
+    progress = [e for e in evs if e["event"] == "progress"]
+    assert downloaded == ["weights.safetensors"]          # закэшированное не качаем
+    assert all(e["total"] == 110 and e["stage"] == "model" for e in progress)
+    assert progress[0]["done"] >= 10                      # config.json уже учтён
+    assert progress[-1]["done"] == 110                    # финал всегда отправлен
+    assert len(progress) < 10                             # троттлинг 0,5 с
+    assert evs[-1] == {"event": "ok", "model": setup.MODEL_REPO}
+
+
+def test_install_model_removes_stale_incomplete(appdir, capsys, monkeypatch, tmp_path):
+    fake_hub(monkeypatch, tmp_path, {"weights.safetensors": 10})
+    blobs = tmp_path / "hub" / "models--mlx-community--whisper-large-v3-turbo" / "blobs"
+    blobs.mkdir(parents=True)
+    (blobs / "abc.123.incomplete").write_bytes(b"x" * 5)
+    (blobs / "done-blob").write_bytes(b"y")
+    setup.main(["install-model"])
+    assert not (blobs / "abc.123.incomplete").exists()
+    assert (blobs / "done-blob").exists()
+
+
+def test_install_model_disk_full_before_start(appdir, capsys, monkeypatch, tmp_path):
+    fake_hub(monkeypatch, tmp_path, {"weights.safetensors": 10 * 2**30})
+    monkeypatch.setattr(setup, "_free_bytes", lambda path: 2**30)
+    assert setup.main(["install-model"]) == 1
+    ev = events(capsys)[-1]
+    assert ev["code"] == "disk_full" and "ГБ" in ev["message"]
+
+
+def test_install_model_no_network(appdir, capsys, monkeypatch, tmp_path):
+    import huggingface_hub
+    import httpx
+    from huggingface_hub import constants
+    monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+
+    class Api:
+        def model_info(self, repo, files_metadata=False):
+            raise httpx.ConnectError("nodename nor servname provided")
+    monkeypatch.setattr(huggingface_hub, "HfApi", Api)
+    setup.main(["install-model"])
+    assert events(capsys)[-1]["code"] == "no_network"
