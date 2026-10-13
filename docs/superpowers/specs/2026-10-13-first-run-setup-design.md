@@ -79,14 +79,16 @@ link-ffmpeg`, затем запись `lock.sha`.
 - **Карантин.** Скачанный zip помечает всё содержимое `com.apple.quarantine`.
   Бандл не трогаем: перед первым `uv sync` приложение копирует
   `Resources/bin/uv` в `runtime/bin/uv` и снимает атрибут с копии
-  (`removexattr`). `.py`-файлы из бандла только читаются, карантин им не
+  (`removexattr`); копирует заново, если копия отличается от бандловой (после
+  обновления приложения). `.py`-файлы из бандла только читаются, карантин им не
   мешает; Python и пакеты качает uv — они без карантина. Проверяется на чистом
   аккаунте.
 - **App Translocation.** Если приложение запущено прямо из Загрузок, macOS
   запускает его из случайного read-only пути (`/AppTranslocation/` в
   `Bundle.main.bundlePath`); автозапуск указывал бы на временный путь. В этом
   случае вместо мастера — окно «Перенеси BeeDott в папку Программы и открой
-  снова» с кнопкой «Показать в Finder» и выходом; рантайм не ставится.
+  снова» с кнопкой «Открыть Загрузки» (не «Показать в Finder»: `bundlePath`
+  указывает на read-only копию) и выходом; рантайм не ставится.
 - **Обновление.** На старте, если `sha256(Resources/backend/uv.lock) !=
   runtime/lock.sha`, супервизор до запуска демона выполняет тот же `uv sync`
   (быстро, кэш на месте); в меню — «Обновляю компоненты…». Ошибка — в меню
@@ -112,8 +114,10 @@ stdin, никогда в argv (видно в `ps`).
 
 | Команда | Что делает | `ok` |
 |---|---|---|
-| `status` | модель скачана? способ саммари настроен? Telegram настроен? | `{"model": bool, "summary": "api"\|"claude_cli"\|null, "telegram": bool}` |
-| `install-model` | качает `transcriber.MODEL_REPO` пофайлово через `hf_hub_download(tqdm_class=…)`; total — сумма размеров из `HfApi.model_info(files_metadata=True)`, done — сумма уже скачанных файлов + `n` текущего бара; событие не чаще раза в 0,5 с. Перед стартом удаляет осиротевшие `*.incomplete` в `blobs/` этого репо. Докачки нет (huggingface_hub 1.23 с hf-xet начинает файл заново): прерванная загрузка начинается с нуля, уже скачанные файлы не перекачиваются | `{"model": repo}` |
+| `status` | модель скачана (офлайн: `snapshot_download(local_files_only=True)`, сеть не трогает)? способ саммари настроен? Telegram настроен? | `{"model": bool, "summary": "api"\|"claude_cli"\|null, "telegram": bool}` |
+| `install-model` | качает `transcriber.MODEL_REPO` пофайлово через `hf_hub_download(tqdm_class=…)`; total — сумма размеров из `HfApi.model_info(files_metadata=True)`, done — сумма уже скачанных файлов + `n` текущего бара; событие не чаще раза в 0,5 с. Класс бара — подкласс обычного `tqdm.tqdm`
+(не `huggingface_hub.utils.tqdm`: тот без терминала ставит `disable=None`, и `n`
+не растёт); stderr в JSON-поток не попадает (xet рисует свой бар туда). Перед стартом удаляет осиротевшие `*.incomplete` в `blobs/` этого репо. Докачки нет (huggingface_hub 1.23 с hf-xet начинает файл заново): прерванная загрузка начинается с нуля, уже скачанные файлы не перекачиваются | `{"model": repo}` |
 | `link-ffmpeg` | симлинк `runtime/bin/ffmpeg` | `{"ffmpeg": path}` |
 | `check-key` | stdin: ключ. `anthropic.Anthropic(api_key=…).models.list(limit=1)`; успех → `update_config_env` для `ANTHROPIC_API_KEY` и `SUMMARY_BACKEND=api` | `{}` |
 | `telegram-check` | stdin: токен. `getMe` | `{"bot": "username"}` |
@@ -141,6 +145,9 @@ stdin, никогда в argv (видно в `ps`).
   не установлен — не спавнит, состояние `.notInstalled`. Новое `restart()` для
   применения настроек; если демон запущен снаружи (`weSpawned == false`),
   перезапустить его нельзя — мастер пишет «Перезапусти демон, чтобы применить».
+  Из `.notInstalled` супервизор выходит по вызову `runtimeReady()`: его делает
+  мастер после успешного `uv sync` + `link-ffmpeg` (до скачивания модели —
+  демону модель нужна только к первой расшифровке).
 - **Дочерние процессы.** macOS не убивает детей вместе с родителем: запущенные
   `uv`/`python -m daemon.setup` приложение хранит и завершает в
   `applicationWillTerminate`.
@@ -151,8 +158,11 @@ stdin, никогда в argv (видно в `ps`).
   открывается сам, если нет рантайма или модели, либо если
   `UserDefaults.setupCompleted == false` и саммари не настроено. Если всё уже
   есть (твой Mac) — `setupCompleted = true` молча, мастер не показывается.
-- **Дропдаун** — пункт «Настройка…» в футере открывает мастер; шаг 1 в нём
-  отмечен выполненным.
+- **Дропдаун** — пункт «Настройка…» в футере открывает мастер. Шаги, которые
+  уже готовы по `status`, отмечены выполненными: шаг 1 (рантайм + модель), шаг 2
+  при `summary != null` — показывает текущий способ («Anthropic API» или
+  «claude CLI (Max)») и кнопку «Заменить ключ»; без неё `check-key` не
+  вызывается и `SUMMARY_BACKEND` не меняется.
 - **Применение настроек.** После сохранения ключа или Telegram демон
   перезапускается, чтобы перечитать `config.env`. Если идёт запись или
   обработка — перезапуск откладывается до простоя, в мастере: «Применится после
@@ -215,14 +225,19 @@ stdin, никогда в argv (видно в `ps`).
 
 ## Тесты
 
-- **pytest** `tests/test_setup.py`: `status` (комбинации config.env и `claude` в
-  PATH); `check-key` (мок anthropic: успех пишет оба ключа с правами 0600,
+- **pytest** `tests/test_setup.py`: `status` (комбинации config.env; мок
+  `claude_auth.claude_bin()`, а не PATH; модель — офлайн-проверка на фейковом
+  кэше); `check-key` (мок anthropic: успех пишет оба ключа с правами 0600,
   401 → `invalid_key`, сетевая ошибка → `no_network`); `telegram-*` (мок
-  requests: getMe, getUpdates с /start, sendMessage, таймаут); прогресс
-  `install-model` (фейковый кэш с растущими файлами, мок model_info);
+  requests: getMe, getUpdates с /start и подтверждением offset, sendMessage,
+  409 → `bot_busy`, таймаут); `install-model` (мок `model_info` и
+  `hf_hub_download`, который двигает переданный `tqdm_class`: done/total,
+  троттлинг 0,5 с, удаление осиротевших `*.incomplete` до старта);
   `link-ffmpeg`; секреты не попадают в argv и вывод.
+- **pytest -m slow**: ffmpeg из imageio-ffmpeg умеет `-ignore_length`,
+  `channelsplit`, `flac`.
 - **app/Tests**: разбор JSON-событий, сравнение хэша, выбор режима
-  (dev/bundled) по набору путей.
+  (dev/bundled) по набору путей, распознавание App Translocation по пути.
 - **Ручная проверка встроенного режима без GUI:** собрать `.app`, выполнить тот
   же `uv sync` во временный `runtime/` из `Resources/backend`, прогнать
   `setup status`, `install-model` (модель уже в кэше — мгновенно), запустить
