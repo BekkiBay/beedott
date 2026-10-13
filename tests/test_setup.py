@@ -95,3 +95,66 @@ def test_unknown_command(capsys):
 def test_model_repo_matches_transcriber():
     from daemon import transcriber
     assert setup.MODEL_REPO == transcriber.MODEL_REPO
+
+
+class FakeModels:
+    def __init__(self, exc=None):
+        self.exc = exc
+
+    def list(self, limit):
+        if self.exc:
+            raise self.exc
+        return []
+
+
+def fake_anthropic(monkeypatch, exc=None):
+    import anthropic
+
+    class Client:
+        def __init__(self, *, api_key, **kwargs):
+            self.api_key = api_key
+            self.models = FakeModels(exc)
+
+    monkeypatch.setattr(anthropic, "Anthropic", Client)
+
+
+def run_with_stdin(monkeypatch, argv, text):
+    monkeypatch.setattr("sys.stdin", io.StringIO(text + "\n"))
+    return setup.main(argv)
+
+
+def test_check_key_ok_writes_backend_and_key(appdir, capsys, monkeypatch):
+    import stat
+    fake_anthropic(monkeypatch)
+    assert run_with_stdin(monkeypatch, ["check-key"], "sk-ant-good") == 0
+    assert events(capsys) == [{"event": "ok"}]
+    cfg = appdir / "config.env"
+    text = cfg.read_text()
+    assert "ANTHROPIC_API_KEY=sk-ant-good" in text and "SUMMARY_BACKEND=api" in text
+    assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+
+
+def test_check_key_rejected(appdir, capsys, monkeypatch):
+    import anthropic
+    import httpx
+    resp = httpx.Response(401, request=httpx.Request("GET", "https://api.anthropic.com/v1/models"))
+    fake_anthropic(monkeypatch, anthropic.AuthenticationError("bad sk-ant-bad", response=resp, body=None))
+    assert run_with_stdin(monkeypatch, ["check-key"], "sk-ant-bad") == 1
+    ev = events(capsys)[-1]
+    assert ev["code"] == "invalid_key"
+    assert "sk-ant-bad" not in ev["message"]
+    assert not (appdir / "config.env").exists()
+
+
+def test_check_key_no_network(appdir, capsys, monkeypatch):
+    import anthropic
+    import httpx
+    fake_anthropic(monkeypatch, anthropic.APIConnectionError(
+        request=httpx.Request("GET", "https://api.anthropic.com/v1/models")))
+    run_with_stdin(monkeypatch, ["check-key"], "sk-ant-x")
+    assert events(capsys)[-1]["code"] == "no_network"
+
+
+def test_check_key_empty(appdir, capsys, monkeypatch):
+    assert run_with_stdin(monkeypatch, ["check-key"], "") == 1
+    assert events(capsys)[-1]["code"] == "invalid_key"

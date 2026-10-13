@@ -92,11 +92,30 @@ def _last_line(exc: BaseException) -> str:
     return lines[-1] if lines else type(exc).__name__
 
 
+def cmd_check_key(key: str) -> dict:
+    """Проверить ключ Anthropic настоящим запросом (список моделей — без
+    расхода токенов) и включить саммари через API."""
+    if not key:
+        raise SetupError("invalid_key", "пустой ключ")
+    import anthropic
+    try:
+        anthropic.Anthropic(api_key=key, max_retries=1, timeout=20).models.list(limit=1)
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as exc:
+        raise SetupError("invalid_key", _last_line(exc)) from exc
+    except anthropic.APIConnectionError as exc:
+        raise SetupError("no_network", _last_line(exc)) from exc
+    import config
+    config.update_config_env("ANTHROPIC_API_KEY", key)
+    config.update_config_env("SUMMARY_BACKEND", "api")
+    return {}
+
+
 COMMANDS = {
     "status": cmd_status,
+    "check-key": cmd_check_key,
 }
 # Команды, которым нужен секрет из stdin (первая строка).
-SECRET_COMMANDS: set[str] = set()
+SECRET_COMMANDS = {"check-key"}
 
 
 def main(argv: list[str] | None = None) -> int:
