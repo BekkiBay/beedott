@@ -172,6 +172,12 @@ app/Tools/app_icon.sh          # перерисовать иконку (по у�
 равно). Путь к репо сохраняется в настройках приложения, демон стартует из
 репо и при запуске из `/Applications`. Автозапуск — через «Объекты входа».
 
+**Коллегам (чистый Mac, без репо и терминала):** `app/package.sh` собирает
+`app/build/BeeDott.zip`, инструкция — [docs/INSTALL.md](docs/INSTALL.md). При
+первом запуске мастер сам ставит Python-пакеты и модель Whisper в
+`~/Library/Application Support/MeetMind/runtime`, спрашивает ключ Anthropic и
+по желанию подключает Telegram. Повторно — меню → «Настройка…».
+
 ## Запуск как сервис
 
 `launchd` plist можно положить в `~/Library/LaunchAgents/com.meetmind.plist`,
