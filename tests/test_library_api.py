@@ -284,6 +284,20 @@ def test_ensure_tool_path_adds_homebrew(monkeypatch):
     assert os.environ["PATH"].split(":").count("/opt/homebrew/bin") == 1
 
 
+def test_ensure_tool_path_puts_runtime_bin_first(monkeypatch, tmp_path):
+    """Встроенный режим (чистый Mac): ffmpeg — симлинк в app_dir()/runtime/bin
+    (daemon/setup.py link-ffmpeg). Он должен идти раньше Homebrew."""
+    from daemon.app import _ensure_tool_path
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    _ensure_tool_path()
+    import os
+    parts = os.environ["PATH"].split(":")
+    assert parts[0] == str(tmp_path / "runtime" / "bin")
+    _ensure_tool_path()
+    assert os.environ["PATH"].split(":").count(str(tmp_path / "runtime" / "bin")) == 1
+
+
 # ───────────── reprocess во время failed_retry (кнопка «Повторить») ──────────
 
 

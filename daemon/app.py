@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # Каталоги CLI-инструментов, которых нет в PATH LaunchServices/launchd.
 # Демон, запущенный Swift-супервизором из .app, без них не находит ffmpeg
 # (mlx-whisper декодирует аудио через ffmpeg subprocess) и claude.
+# Встроенный режим кладёт ffmpeg в app_dir()/runtime/bin — он идёт первым.
 _TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 
 # Как часто проверять предохранители записи owner=app (app_guard.py).
@@ -59,10 +60,12 @@ def _configure_logging() -> None:
 
 
 def _ensure_tool_path() -> None:
-    """Дополнить PATH хоумбрю-каталогами (идемпотентно, в начало)."""
+    """Дополнить PATH каталогами инструментов (идемпотентно, в начало):
+    runtime/bin встроенного режима (ffmpeg из imageio-ffmpeg), затем Homebrew."""
     import os
+    dirs = (str(app_dir() / "runtime" / "bin"), *_TOOL_DIRS)
     current = os.environ.get("PATH", "").split(":")
-    missing = [d for d in _TOOL_DIRS if d not in current]
+    missing = [d for d in dirs if d not in current]
     if missing:
         os.environ["PATH"] = ":".join(missing + current)
 
