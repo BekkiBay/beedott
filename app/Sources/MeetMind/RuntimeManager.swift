@@ -156,13 +156,10 @@ final class RuntimeManager: @unchecked Sendable {
     }
 
     private func appendLog(_ text: String) {
-        guard let data = text.data(using: .utf8) else { return }
-        if !fm.fileExists(atPath: setupLogURL.path) { fm.createFile(atPath: setupLogURL.path, contents: nil) }
-        if let h = try? FileHandle(forWritingTo: setupLogURL) {
-            h.seekToEndOfFile()
-            h.write(data)
-            try? h.close()
-        }
+        guard let data = text.data(using: .utf8),
+              let h = RuntimeLogic.openForAppend(setupLogURL.path) else { return }
+        h.write(data)
+        try? h.close()
     }
 
     /// Построчно читает handle до EOF.

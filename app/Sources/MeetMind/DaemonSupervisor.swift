@@ -220,11 +220,8 @@ final class DaemonSupervisor: ObservableObject {
         p.currentDirectoryURL = URL(fileURLWithPath: launch.cwd)
         p.environment = launch.environment
 
-        if !FileManager.default.fileExists(atPath: logURL.path) {
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        }
-        if let handle = try? FileHandle(forWritingTo: logURL) {
-            handle.seekToEndOfFile()
+        // O_APPEND: демон дописывает в конец, не затирая строки супервизора (log()).
+        if let handle = RuntimeLogic.openForAppend(logURL.path) {
             p.standardOutput = handle
             p.standardError = handle
         }
@@ -266,12 +263,9 @@ final class DaemonSupervisor: ObservableObject {
     private func log(_ s: String) {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(s)\n"
-        if let data = line.data(using: .utf8) {
-            if let handle = try? FileHandle(forWritingTo: logURL) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            }
+        if let data = line.data(using: .utf8), let handle = RuntimeLogic.openForAppend(logURL.path) {
+            handle.write(data)
+            try? handle.close()
         }
         FileHandle.standardError.write(line.data(using: .utf8) ?? Data())
     }

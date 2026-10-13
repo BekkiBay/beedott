@@ -80,6 +80,14 @@ enum RuntimeLogic {
             .reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
     }
 
+    /// Дескриптор лога в режиме O_APPEND: каждая запись — в текущий конец файла.
+    /// daemon.log пишут двое (stdout демона и строки супервизора); с обычным
+    /// FileHandle(forWritingTo:) демон пишет со своей позиции и затирает чужие строки.
+    static func openForAppend(_ path: String) -> FileHandle? {
+        let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+        return fd >= 0 ? FileHandle(fileDescriptor: fd, closeOnDealloc: true) : nil
+    }
+
     /// Запуск прямо из Загрузок: macOS исполняет копию из read-only пути.
     static func isTranslocated(_ bundlePath: String) -> Bool {
         bundlePath.contains("/AppTranslocation/")

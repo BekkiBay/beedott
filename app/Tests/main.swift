@@ -304,4 +304,22 @@ do {
     check(RuntimeLogic.setupErrorText(code: "weird", message: "boom").contains("boom"), "неизвестный код — сообщение как есть")
 }
 
+// 23. Лог демона: супервизор и демон пишут в один daemon.log. Без O_APPEND демон
+// пишет со своей позиции и затирает строки, дописанные супервизором после его старта.
+do {
+    let path = NSTemporaryDirectory() + "meetmind-append-\(UUID().uuidString).log"
+    FileManager.default.createFile(atPath: path, contents: nil)
+    let daemon = RuntimeLogic.openForAppend(path)
+    let supervisor = RuntimeLogic.openForAppend(path)
+    check(daemon != nil && supervisor != nil, "лог открылся на дозапись")
+    daemon?.write(Data("daemon-1\n".utf8))
+    supervisor?.write(Data("supervisor\n".utf8))
+    daemon?.write(Data("daemon-2\n".utf8))
+    try? daemon?.close()
+    try? supervisor?.close()
+    let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+    check(text == "daemon-1\nsupervisor\ndaemon-2\n", "строки не затёрты: \(text.debugDescription)")
+    try? FileManager.default.removeItem(atPath: path)
+}
+
 if failures == 0 { print("OK — все тесты прошли") } else { print("\(failures) провалено"); exit(1) }
