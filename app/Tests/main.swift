@@ -245,4 +245,58 @@ do {
     check(out == [32767, 0, 0, -32767], "добивка и клиппинг: \(out)")
 }
 
+// 20. RuntimeLogic: события daemon.setup.
+do {
+    if case .progress(let stage, let done, let total)? =
+        SetupEvent.parse(#"{"event": "progress", "stage": "model", "done": 5, "total": 10}"#) {
+        check(stage == "model" && done == 5 && total == 10, "progress разобран")
+    } else { check(false, "progress не разобран") }
+
+    if case .ok(let r)? = SetupEvent.parse(#"{"event": "ok", "model": true, "summary": null, "telegram": false, "chat_id": 555, "bot": "b"}"#) {
+        check(r.bool("model") && !r.bool("telegram"), "bool-поля")
+        check(r.string("summary") == nil && r.string("bot") == "b", "string/null")
+        check(r.int("chat_id") == 555, "int")
+    } else { check(false, "ok не разобран") }
+
+    if case .error(let code, let message)? = SetupEvent.parse(#"{"event": "error", "code": "no_network", "message": "x"}"#) {
+        check(code == "no_network" && message == "x", "error разобран")
+    } else { check(false, "error не разобран") }
+
+    check(SetupEvent.parse("Downloading cpython-3.11") == nil, "не-JSON строка игнорируется")
+    check(SetupEvent.parse(#"{"foo": 1}"#) == nil, "JSON без event игнорируется")
+}
+
+// 21. RuntimeLogic: режим запуска демона.
+do {
+    let repo = "/r"
+    let uv = "/opt/homebrew/bin/uv"
+    func mode(saved: String? = nil, env: String? = nil, derived: String = "/nope",
+              uvs: [String] = ["/opt/homebrew/bin/uv"], repos: Set<String> = ["/r"],
+              override: [String]? = nil) -> RuntimeMode {
+        RuntimeLogic.resolveMode(savedRepo: saved, envRepo: env, derivedRepo: derived,
+                                 uvCandidates: uvs, commandOverride: override,
+                                 isRepo: { repos.contains($0) },
+                                 isExecutable: { $0 == "/opt/homebrew/bin/uv" })
+    }
+    check(mode(saved: repo) == .dev(repo: repo, uv: uv, command: [uv, "run", "python", "main.py"]), "repoPath + uv → dev")
+    check(mode(env: repo) == .dev(repo: repo, uv: uv, command: [uv, "run", "python", "main.py"]), "MEETMIND_REPO → dev")
+    check(mode(derived: repo) == .dev(repo: repo, uv: uv, command: [uv, "run", "python", "main.py"]), "рядом со сборкой → dev")
+    check(mode(saved: repo, uvs: []) == .bundled, "репо без uv → bundled")
+    check(mode() == .bundled, "чистый Mac → bundled")
+    check(mode(saved: repo, override: ["/x/python", "main.py"]) == .dev(repo: repo, uv: uv, command: ["/x/python", "main.py"]), "daemonCommand из настроек")
+}
+
+// 22. RuntimeLogic: транслокация, хэш, обновление рантайма, тексты ошибок.
+do {
+    check(RuntimeLogic.isTranslocated("/private/var/folders/x/T/AppTranslocation/ABC/d/BeeDott.app"), "транслокация")
+    check(!RuntimeLogic.isTranslocated("/Applications/BeeDott.app"), "из Программ — нет")
+    check(RuntimeLogic.sha256Hex(Data("abc".utf8)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256")
+    check(RuntimeLogic.needsSync(bundledLockHash: "a", installedLockHash: "a", venvPythonExists: true) == false, "тот же lock — не синхронизируем")
+    check(RuntimeLogic.needsSync(bundledLockHash: "b", installedLockHash: "a", venvPythonExists: true), "новый lock — синхронизируем")
+    check(RuntimeLogic.needsSync(bundledLockHash: "a", installedLockHash: "a", venvPythonExists: false), "нет python — синхронизируем")
+    check(RuntimeLogic.needsSync(bundledLockHash: "a", installedLockHash: nil, venvPythonExists: true), "нет lock.sha — синхронизируем")
+    check(RuntimeLogic.setupErrorText(code: "no_network", message: "").contains("интернет"), "текст no_network")
+    check(RuntimeLogic.setupErrorText(code: "weird", message: "boom").contains("boom"), "неизвестный код — сообщение как есть")
+}
+
 if failures == 0 { print("OK — все тесты прошли") } else { print("\(failures) провалено"); exit(1) }
