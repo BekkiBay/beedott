@@ -1,6 +1,6 @@
 // DropdownView.swift — дропдаун из menubar (экран 02 design_handoff_meetmind).
 // Ширина 312, padding 6, gap 2. Состояния recording/idle, уровни двух
-// источников, последние 3 встречи, «Все встречи…», Claude-тоггл, футер.
+// источников, последние 3 встречи, «Все встречи…», футер.
 
 import SwiftUI
 
@@ -25,7 +25,7 @@ struct DropdownView: View {
 
             divider
 
-            claudeRow
+            settingsSection
 
             divider
 
@@ -44,15 +44,26 @@ struct DropdownView: View {
                 Text(model.recordingTitle ?? "Встреча")
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
-                Text("Идёт запись · \(model.elapsedText)")
+                Text(model.micMuted ? "Идёт запись · \(model.elapsedText) · микрофон выключен"
+                                    : "Идёт запись · \(model.elapsedText)")
                     .font(.system(size: 11))
                     .monospacedDigit()
                     .foregroundStyle(Theme.recordingRed(scheme))
+                    .lineLimit(1)
             }
             Spacer()
-            Image(systemName: "mic.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textTertiary(scheme))
+            if model.canMute {
+                Button(action: { model.toggleMute() }) {
+                    Image(systemName: model.micMuted ? "mic.slash.fill" : "mic.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(model.micMuted ? Theme.recordingRed(scheme)
+                                                        : Theme.textTertiary(scheme))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(model.micMuted ? "Включить микрофон (⌃⌥⌘M)" : "Не записывать микрофон (⌃⌥⌘M)")
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -173,40 +184,77 @@ struct DropdownView: View {
         }
     }
 
-    // MARK: - Claude
+    // MARK: - автозапуск, автозапись, календарь
 
-    private var claudeRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.claudeSpark)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Claude-бустер")
-                        .font(.system(size: 13))
-                    Text("Улучшает саммари в облаке · opt-in")
+    private var settingsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            settingToggle(icon: "power", title: "Запускать при входе в систему",
+                          subtitle: model.loginNeedsApproval
+                              ? "Разрешите в Настройках → Объекты входа" : nil,
+                          isOn: model.launchAtLogin) { model.setLaunchAtLogin($0) }
+            settingToggle(icon: "capsule.fill", title: "Островок у чёлки",
+                          subtitle: "Напомнит о встрече за минуту, покажет запись",
+                          isOn: model.islandEnabled) { model.setIslandEnabled($0) }
+            settingToggle(icon: "video.badge.waveform", title: "Автозапись Google Meet",
+                          subtitle: "Встреча с Meet в Календаре — пишу сам, без неё — спрошу",
+                          isOn: model.autoDetectCalls) { model.setAutoDetectCalls($0) }
+            Button(action: { model.openCalendarSettings() }) {
+                HStack(spacing: 6) {
+                    Image(systemName: calendarIcon)
+                        .font(.system(size: 11))
+                        .foregroundStyle(calendarColor)
+                    Text(calendarText)
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.textTertiary(scheme))
+                    Spacer()
                 }
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { model.claudeEnabled },
-                    set: { model.setClaude(enabled: $0) }))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
             }
-            HStack(spacing: 4) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 8))
-                    .foregroundStyle(Theme.green(scheme))
-                Text("Без бустера аудио и текст не покидают этот Mac")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.textTertiary(scheme))
-            }
+            .buttonStyle(.plain)
+            .help("Открыть настройки")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
+    }
+
+    private func settingToggle(icon: String, title: String, subtitle: String?, isOn: Bool,
+                               set: @escaping (Bool) -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .frame(width: 16)
+                .foregroundStyle(Theme.textTertiary(scheme))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 13))
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textTertiary(scheme))
+                }
+            }
+            Spacer()
+            Toggle("", isOn: Binding(get: { isOn }, set: set))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+        }
+    }
+
+    private var calendarText: String {
+        switch model.calendarStatus {
+        case .noAccess: return "Календарь: нет доступа — открыть настройки"
+        case .noGoogle: return "Google Календарь не подключён — добавить аккаунт"
+        case .google(let n): return "Google Календарь подключён · календарей: \(n)"
+        }
+    }
+
+    private var calendarIcon: String {
+        if case .google = model.calendarStatus { return "checkmark.circle.fill" }
+        return "exclamationmark.circle"
+    }
+
+    private var calendarColor: Color {
+        if case .google = model.calendarStatus { return Theme.green(scheme) }
+        return Theme.orange(scheme)
     }
 
     private var footer: some View {

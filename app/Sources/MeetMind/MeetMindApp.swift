@@ -2,10 +2,11 @@
 // Entry point (@main) живёт в main.swift, чтобы --capture-test мог отработать
 // headless до запуска GUI (PLAN_v3 Task 4.1-4.2).
 //
-// LSUIElement-приложение (без Dock, см. Info.plist). Иконка-emoji в меню-баре:
-// 🧠 idle / 🔴 recording / ⚠️ демон недоступен. Пункты: Start Recording (⌘⇧R),
-// Stop, Cancel Recording (⌘⇧X), статус-строка (очередь / recording), Open Notes
-// Folder (~/MeetMind), Quit MeetMind (гасит и демона, если это мы его спавнили).
+// LSUIElement-приложение (без Dock, см. Info.plist). Иконка в меню-баре:
+// idle / recording / демон недоступен. Хоткеи: ⌘⇧R — старт/стоп, ⌃⌥⌘X — отмена
+// записи с подтверждением (аудит T8: ⌘⇧X без вопроса удалял запись и перехватывал
+// зачёркивание в Slack/Docs). Quit сначала останавливает и сохраняет запись,
+// потом гасит демона, если это мы его спавнили.
 
 import SwiftUI
 import AppKit
@@ -20,6 +21,8 @@ import Carbon
 /// трогать его без прыжка на MainActor (AppModel сам — @MainActor).
 final class NativeCaptureHolder {
     var engine: CaptureEngine?
+    /// Сессия демона, в которую пишет engine (для сверки со status.recording).
+    var sessionId: String?
     /// "app" — активная запись пишется нативным CaptureEngine (Process Tap);
     /// "daemon" — Python Recorder; используется как маркер вне активной записи тоже
     /// (последнее известное значение), но реально осмыслен только пока recordingSessionId != nil.
@@ -49,12 +52,30 @@ final class AppModel: ObservableObject {
     // --- данные для DropdownView / Библиотеки (экраны 02, 05-06)
     @Published private(set) var recordingTitle: String? = nil
     @Published private(set) var recordingStartedAt: Date? = nil
-    @Published private(set) var claudeEnabled: Bool = false
     @Published private(set) var recentMeetings: [MeetingRow] = []
     @Published private(set) var problemCount: Int = 0
     @Published private(set) var micLevel: Double = 0
     @Published private(set) var systemLevel: Double = 0
     @Published private(set) var elapsedText: String = "00:00"
+    /// Ручной mute микрофона в идущей записи (только нативная запись Swift).
+    @Published private(set) var micMuted: Bool = false
+    @Published private(set) var canMute: Bool = false
+
+    // --- автозапуск и автодетект звонков
+    @Published private(set) var launchAtLogin: Bool = false
+    @Published private(set) var loginNeedsApproval: Bool = false
+    @Published private(set) var autoDetectCalls: Bool =
+        UserDefaults.standard.object(forKey: AppModel.autoDetectKey) as? Bool ?? true
+    @Published private(set) var calendarStatus: CalendarContext.Status = .noAccess
+    nonisolated static let autoDetectKey = "autoDetectCalls"
+
+    // --- островок у чёлки
+    @Published private(set) var islandEnabled: Bool =
+        UserDefaults.standard.object(forKey: AppModel.islandKey) as? Bool ?? true
+    /// Ближайшие встречи из Календаря (обновляются раз в ~6 с).
+    @Published private(set) var upcomingEvents: [CalendarEventInfo] = []
+    nonisolated static let islandKey = "notchIsland"
+    private var island: IslandController?
 
     let supervisor = DaemonSupervisor()
 
@@ -63,10 +84,14 @@ final class AppModel: ObservableObject {
     private var supervisorObserver: NSObjectProtocol?
     private let actionQueue = DispatchQueue(label: "com.jvmshid.meetmind.actions")
     private var started = false
+    // Счётчик опросов статуса: Календарь для островка — каждый 2-й (~6 с).
+    nonisolated(unsafe) private var statusTicks = 0
     // См. NativeCaptureHolder — намеренно не MainActor-изолирован, доступ только
     // из actionQueue (сериализован порядком выполнения тем же способом, что и
     // остальные действия record/stop/cancel в этом классе).
     nonisolated(unsafe) private let capture = NativeCaptureHolder()
+    // Автодетект звонков (CallDetectionMachine) — как capture, только с actionQueue.
+    nonisolated(unsafe) private var callMachine = CallDetectionMachine()
 
     private init() {}
 
@@ -88,6 +113,12 @@ final class AppModel: ObservableObject {
         registerHotKeys()
         startStatusPolling()
         startUITimer()
+        // P8: доступ к Календарю — в фоне; старт приложения и записи диалог не ждут.
+        CalendarContext.requestAccessIfNeeded()
+        // MeetMind должен быть запущен всегда, иначе встречи не пишутся.
+        LoginItem.enableOnFirstLaunch()
+        refreshLoginItem()
+        island = IslandController(model: self)
     }
 
     private func handleSupervisorState(_ state: DaemonSupervisor.RunState) {
@@ -102,12 +133,41 @@ final class AppModel: ObservableObject {
     }
 
     private func registerHotKeys() {
-        let mods = UInt32(cmdKey | shiftKey)
-        HotKeyManager.shared.register(keyCode: HotKeyManager.KeyCode.r, modifiers: mods) {
+        HotKeyManager.shared.register(
+            keyCode: HotKeyManager.KeyCode.r, modifiers: UInt32(cmdKey | shiftKey)
+        ) {
             Task { @MainActor in AppModel.shared.toggleRecording() }
         }
-        HotKeyManager.shared.register(keyCode: HotKeyManager.KeyCode.x, modifiers: mods) {
-            Task { @MainActor in AppModel.shared.cancelRecording() }
+        HotKeyManager.shared.register(
+            keyCode: HotKeyManager.KeyCode.m, modifiers: UInt32(controlKey | optionKey | cmdKey)
+        ) {
+            Task { @MainActor in AppModel.shared.toggleMute() }
+        }
+        HotKeyManager.shared.register(
+            keyCode: HotKeyManager.KeyCode.x, modifiers: UInt32(controlKey | optionKey | cmdKey)
+        ) {
+            // Через RunLoop, а не Task: модальный NSAlert внутри задачи главной
+            // очереди заблокировал бы её — статус, таймер и предохранители
+            // стояли бы, пока открыт диалог.
+            RunLoop.main.perform(inModes: [.common]) {
+                MainActor.assumeIsolated { AppModel.shared.confirmCancelRecording() }
+            }
+        }
+    }
+
+    /// Отмена удаляет аудио безвозвратно — только после явного подтверждения.
+    func confirmCancelRecording() {
+        guard recordingSessionId != nil else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Удалить текущую запись?"
+        alert.informativeText = "Аудио будет удалено без возможности восстановления, фоллоу-ап не придёт."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Продолжить запись")
+        let delete = alert.addButton(withTitle: "Удалить запись")
+        delete.hasDestructiveAction = true
+        if alert.runModal() == .alertSecondButtonReturn {
+            cancelRecording()
         }
     }
 
@@ -126,11 +186,47 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             do {
                 let result = try ControlClient.status()
-                let recording = result["recording"] as? String
+                var recording = result["recording"] as? String
+                // Старый демон (без протокола T3/T7) поля recording_owner не
+                // присылает — тогда ничего не трогаем.
+                let ownerKnown = result.keys.contains("recording_owner")
+                if let sid = recording, (result["recording_owner"] as? String) == "app" {
+                    if self.capture.engine == nil {
+                        // Запись числится за приложением, но движка у нас нет —
+                        // прошлый экземпляр упал или вышел, не закрыв её.
+                        // Закрываем: демон починит заголовок WAV и обработает
+                        // записанное (пустую запись отменит) — аудит T3.
+                        NSLog("MeetMind: осиротевшая запись %@ — закрываю", sid)
+                        _ = try? ControlClient.stopRecording(sessionId: sid)
+                        recording = nil
+                    } else if sid == self.capture.sessionId,
+                              let reason = result["stop_requested"] as? String {
+                        // Предохранитель демона (лимит длительности, диск,
+                        // размер WAV) — аудит T7.
+                        NSLog("MeetMind: предохранитель (%@) — останавливаю запись", reason)
+                        try? self.performStopRecording()
+                        recording = nil
+                    }
+                } else if ownerKnown, let engine = self.capture.engine,
+                          recording != self.capture.sessionId {
+                    // Движок пишет, а у демона нашей записи уже нет — демон
+                    // закрыл её сам (файл долго не менялся). Гасим движок, чтобы
+                    // микрофон не писал «в никуда», а индикатор записи не врал.
+                    let frames = engine.stop()
+                    self.capture.engine = nil
+                    self.capture.sessionId = nil
+                    self.capture.owner = "daemon"
+                    NSLog("MeetMind: демон закрыл запись — движок остановлен (%llu кадров)", frames)
+                }
+                // P16: пока мы поллим, демон копит уведомления для нас (вместо
+                // osascript) — забираем и показываем каждое ровно один раз.
+                // Ошибку (старый демон: unknown_method) молча пропускаем.
+                if let notes = try? ControlClient.notificationsPop() {
+                    for note in notes { NotificationManager.shared.post(note) }
+                }
                 let recTitle = result["recording_title"] as? String
                 let recStarted = (result["recording_started_at"] as? String)
                     .flatMap { ISO8601DateFormatter().date(from: $0) }
-                let claude = (result["claude_enabled"] as? Bool) ?? false
                 let queueRows = (result["queue"] as? [[String: Any]]) ?? []
                 let queueTotal = queueRows.reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
                 let lastError = result["last_error"] as? [String: Any]
@@ -138,11 +234,22 @@ final class AppModel: ObservableObject {
                 // Свежий список встреч тем же заходом (дропдаун: последние 3 +
                 // бейдж проблемных на «Все встречи…»).
                 let meetings = (try? ControlClient.sessionsList(limit: 50)) ?? []
+                if UserDefaults.standard.object(forKey: AppModel.autoDetectKey) as? Bool ?? true {
+                    recording = self.detectCall(recording: recording)
+                }
+                let calendar = CalendarContext.status()
+                self.statusTicks += 1
+                let upcoming = self.statusTicks % 2 == 1 ? CalendarContext.upcomingEvents() : nil
+                let recordingNow = recording
+                let mutable = recording != nil && self.capture.engine != nil
                 Task { @MainActor in
-                    self.recordingSessionId = recording
+                    self.canMute = mutable
+                    if recordingNow == nil { self.micMuted = false }
+                    self.calendarStatus = calendar
+                    if let upcoming { self.upcomingEvents = upcoming }
+                    self.recordingSessionId = recordingNow
                     self.recordingTitle = recTitle
                     self.recordingStartedAt = recStarted
-                    self.claudeEnabled = claude
                     self.queueCount = queueTotal
                     self.daemonHealthy = true
                     self.lastErrorText = errText
@@ -190,14 +297,42 @@ final class AppModel: ObservableObject {
             micLevel = 0
             systemLevel = 0
         }
+        island?.tick()
+    }
+
+    // MARK: - mute микрофона
+
+    /// Не записывать микрофон (собеседники пишутся дальше). Работает для
+    /// нативной записи (Process Tap); у запасного Python Recorder mute нет.
+    func toggleMute() {
+        guard recordingSessionId != nil else { return }
+        let muted = !micMuted
+        micMuted = muted
+        actionQueue.async { [weak self] in
+            self?.capture.engine?.setMicMuted(muted)
+        }
+        NSLog("MeetMind: микрофон в записи %@", muted ? "выключен" : "включён")
+    }
+
+    // MARK: - островок у чёлки
+
+    func setIslandEnabled(_ enabled: Bool) {
+        islandEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: AppModel.islandKey)
+        island?.tick()
+    }
+
+    /// «Записать» в напоминании островка. Встреча с Meet — запись остановится
+    /// сама в конце звонка (как при автодетекте), без Meet — ручной стоп.
+    func recordFromIsland(meetCode: String?) {
+        performAction { [weak self] in
+            guard let self else { return }
+            _ = try self.performStartRecording(source: "calendar")
+            if meetCode != nil { self.callMachine.markAutoRecording() }
+        }
     }
 
     // MARK: - действия дропдауна (экран 02)
-
-    func setClaude(enabled: Bool) {
-        claudeEnabled = enabled // оптимистично; статус-поллинг подтвердит
-        actionQueue.async { try? ControlClient.claudeSet(enabled: enabled) }
-    }
 
     func openLibrary(sessionId: String?) {
         LibraryWindow.show(sessionId: sessionId)
@@ -231,13 +366,10 @@ final class AppModel: ObservableObject {
     func stopRecording() { performAction { [weak self] in try self?.performStopRecording() } }
     func cancelRecording() { performAction { [weak self] in try self?.performCancelRecording() } }
 
-    func toggleRecording() {
-        if recordingSessionId != nil {
-            stopRecording()
-        } else {
-            startRecording()
-        }
-    }
+    /// Решение «старт или стоп» принимается на actionQueue по фактическому
+    /// состоянию (свой движок + статус демона), а не по закэшированному
+    /// recordingSessionId — устаревший статус больше не обрывает запись (T9).
+    func toggleRecording() { performAction { [weak self] in try self?.performToggle() } }
 
     private func performAction(_ action: @escaping () throws -> Void) {
         guard !busy else { return }
@@ -267,7 +399,108 @@ final class AppModel: ObservableObject {
     /// через Swift (audio_path_owner=app), демон не поднимает Python Recorder.
     /// (b) CaptureError.tapUnavailable (или любая другая ошибка тапа) → вечный
     /// fallback: audio_path_owner=daemon, Python Recorder как раньше (SPEC_v3 D1).
-    nonisolated private func performStartRecording() throws {
+    nonisolated private func performToggle() throws {
+        if capture.engine != nil {
+            try performStopRecording()
+            return
+        }
+        let status = try ControlClient.status()
+        if status["recording"] as? String != nil {
+            try performStopRecording()
+        } else {
+            try performStartRecording()
+        }
+    }
+
+    // MARK: - автодетект звонков (Google Meet)
+
+    /// Шаг детектора на actionQueue: браузер пишет микрофон + встреча с Meet в
+    /// Календаре → пишем сами; без встречи — спрашиваем уведомлением; звонок
+    /// кончился → останавливаем автозапись. Возвращает актуальный id записи.
+    nonisolated private func detectCall(recording: String?) -> String? {
+        let audio = BrowserAudioProbe.current()
+        let meeting = recording == nil && audio.input ? CalendarContext.currentMeeting() : nil
+        let action = callMachine.step(audio, now: Date(), isRecording: recording != nil,
+                                      calendarHasMeet: meeting?.meetCode != nil)
+        switch action {
+        case .none:
+            return recording
+        case .autoStart:
+            do {
+                let sid = try performStartRecording(source: "auto_meet")
+                callMachine.markAutoRecording()
+                NotificationManager.shared.postLocal(
+                    title: "Запись Google Meet началась",
+                    message: "«\(meeting?.title ?? "Встреча")» — пишу автоматически. "
+                        + "Остановить — ⌘⇧R.", sessionId: sid)
+                return sid
+            } catch {
+                NSLog("MeetMind: автостарт записи не удался — %@", error.localizedDescription)
+                return recording
+            }
+        case .askToRecord:
+            NotificationManager.shared.askToRecordCall()
+            return recording
+        case .stop:
+            do {
+                try performStopRecording()
+                NotificationManager.shared.postLocal(
+                    title: "Звонок закончился",
+                    message: "Запись остановлена — фоллоу-ап придёт через несколько минут.",
+                    sessionId: recording)
+            } catch {
+                NSLog("MeetMind: автостоп записи не удался — %@", error.localizedDescription)
+            }
+            return nil
+        }
+    }
+
+    /// «Записать» в уведомлении о звонке без события в Календаре.
+    func recordDetectedCall() {
+        performAction { [weak self] in
+            guard let self else { return }
+            _ = try self.performStartRecording(source: "auto_meet")
+            self.callMachine.markAutoRecording()
+        }
+    }
+
+    func setAutoDetectCalls(_ enabled: Bool) {
+        autoDetectCalls = enabled
+        UserDefaults.standard.set(enabled, forKey: AppModel.autoDetectKey)
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        LoginItem.setEnabled(enabled)
+        refreshLoginItem()
+        if LoginItem.needsApproval { LoginItem.openSystemSettings() }
+    }
+
+    func openLoginItemsSettings() { LoginItem.openSystemSettings() }
+
+    private func refreshLoginItem() {
+        launchAtLogin = LoginItem.isEnabled
+        loginNeedsApproval = LoginItem.needsApproval
+    }
+
+    func openCalendarSettings() {
+        // Google-аккаунт → «Учётные записи интернета»; доступ приложения → «Конфиденциальность → Календари».
+        let target = calendarStatus == .noAccess
+            ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
+            : "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension"
+        if let url = URL(string: target) { NSWorkspace.shared.open(url) }
+    }
+
+    @discardableResult
+    nonisolated private func performStartRecording(source: String = "manual") throws -> String? {
+        // Аудит T9: повторный старт не должен трогать идущую запись — раньше
+        // ошибка start_recording обнуляла capture.engine, и запись обрывалась.
+        guard capture.engine == nil else {
+            throw ControlClientError.protocolError("запись уже идёт")
+        }
+        // P8: название и участники текущей встречи из Календаря (синхронно, без
+        // диалога). Нет доступа / события — nil, встречу назовёт демон.
+        let meeting = CalendarContext.currentMeeting()
+        let meetingKey = meeting?.meetCode.map { "meet:\($0)" }
         let probeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("meetmind-tap-probe-\(UUID().uuidString).wav")
         let probe = CaptureEngine()
@@ -280,25 +513,24 @@ final class AppModel: ObservableObject {
                   error.localizedDescription)
             capture.owner = "daemon"
             capture.engine = nil
-            _ = try ControlClient.startRecording(audioPathOwner: "daemon")
-            return
+            let result = try ControlClient.startRecording(
+                title: meeting?.title, attendees: meeting?.attendees, audioPathOwner: "daemon",
+                source: source, meetingKey: meetingKey)
+            return result["session_id"] as? String
         }
 
         NSLog("MeetMind: Process Tap доступен — нативная запись (audio_path_owner=app)")
-        let result: [String: Any]
-        do {
-            result = try ControlClient.startRecording(audioPathOwner: "app")
-        } catch {
-            NSLog("MeetMind: start_recording(app) не удался (%@) — fallback на daemon Recorder",
-                  error.localizedDescription)
-            capture.owner = "daemon"
-            capture.engine = nil
-            _ = try ControlClient.startRecording(audioPathOwner: "daemon")
-            return
-        }
-        guard let audioPath = result["audio_path"] as? String else {
+        // Ошибка демона (busy, таймаут) — не повод уходить на Python Recorder:
+        // тап работает, а второй start_recording всё равно упрётся в то же.
+        // Если демон успел завести сессию, но ответ не дошёл, её закроет
+        // проверка осиротевшей записи в refreshStatus.
+        let result = try ControlClient.startRecording(
+            title: meeting?.title, attendees: meeting?.attendees, audioPathOwner: "app",
+            source: source, meetingKey: meetingKey)
+        guard let audioPath = result["audio_path"] as? String,
+              let sessionId = result["session_id"] as? String else {
             _ = try? ControlClient.cancelRecording()
-            throw ControlClientError.protocolError("start_recording(app): нет audio_path в ответе")
+            throw ControlClientError.protocolError("start_recording(app): нет audio_path/session_id в ответе")
         }
         NSLog("MeetMind: нативный захват пишет в %@", audioPath)
 
@@ -312,7 +544,9 @@ final class AppModel: ObservableObject {
             throw error
         }
         capture.engine = engine
+        capture.sessionId = sessionId
         capture.owner = "app"
+        return sessionId
     }
 
     /// Если писали сами (owner=app) — engine.stop() ДО stop_recording (файл должен
@@ -322,6 +556,7 @@ final class AppModel: ObservableObject {
             let frames = engine.stop()
             NSLog("MeetMind: CaptureEngine.stop() — записано кадров: %llu", frames)
             capture.engine = nil
+            capture.sessionId = nil
         }
         defer { capture.owner = "daemon" }
         _ = try ControlClient.stopRecording()
@@ -332,6 +567,7 @@ final class AppModel: ObservableObject {
             let frames = engine.stop()
             NSLog("MeetMind: CaptureEngine.stop() (cancel) — записано кадров: %llu", frames)
             capture.engine = nil
+            capture.sessionId = nil
         }
         defer { capture.owner = "daemon" }
         _ = try ControlClient.cancelRecording()
@@ -344,8 +580,34 @@ final class AppModel: ObservableObject {
     }
 
     func quit() {
+        finishRecordingBeforeExit()
         supervisor.terminateOnQuit()
         NSApplication.shared.terminate(nil)
+    }
+
+    /// Аудит T10: при выходе закрыть WAV и отдать запись демону на обработку —
+    /// раньше заголовок оставался незакрытым, а сессия висела в RECORDING.
+    /// Синхронно на actionQueue: дожидаемся идущего действия и не гоняемся с ним.
+    func finishRecordingBeforeExit() {
+        let daemonDiesWithUs = supervisor.terminatesDaemonOnQuit
+        actionQueue.sync {
+            if capture.owner == "app", capture.engine != nil {
+                do {
+                    try performStopRecording()
+                } catch {
+                    NSLog("MeetMind: stop_recording при выходе не удался (%@) — "
+                          + "WAV закрыт, демон обработает запись при следующем старте",
+                          error.localizedDescription)
+                }
+            } else if daemonDiesWithUs,
+                      let status = try? ControlClient.status(),
+                      status["recording"] as? String != nil,
+                      (status["recording_owner"] as? String) == "daemon" {
+                // Пишет Python Recorder, а демона мы сейчас погасим — закрываем
+                // запись штатно, а не через SIGTERM и восстановление.
+                _ = try? ControlClient.stopRecording()
+            }
+        }
     }
 }
 
@@ -376,11 +638,16 @@ struct MenuBarLabel: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Делегат уведомлений — до всего, что может запостить (P16).
+        NotificationManager.shared.install()
         AppModel.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        AppModel.shared.supervisor.terminateOnQuit()
+        MainActor.assumeIsolated {
+            AppModel.shared.finishRecordingBeforeExit()
+            AppModel.shared.supervisor.terminateOnQuit()
+        }
     }
 }
 

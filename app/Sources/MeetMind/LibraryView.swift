@@ -5,6 +5,8 @@
 
 import SwiftUI
 import AppKit
+import Combine
+import UniformTypeIdentifiers
 
 // MARK: - модель окна
 
@@ -17,17 +19,51 @@ final class LibraryModel: ObservableObject {
     @Published var selected: SessionDetail?
     @Published var selectedError: String?
     @Published var loading = false
+    /// «Хранить аудио» до подтверждения демоном (P10) — тоггл не прыгает назад.
+    @Published var keepAudioPending: Bool?
+    @Published private(set) var importing = false
 
     enum Filter: String, CaseIterable {
         case all = "Все", today = "Сегодня", week = "Неделя", errors = "С ошибками"
     }
 
+    /// Аудио и видео со звуком (P13); ffmpeg демона понимает и то, чего не знает система.
+    static let importableTypes: [UTType] = {
+        let known: [UTType] = [.audio, .mpeg4Audio, .mp3, .wav, .aiff,
+                               .movie, .mpeg4Movie, .quickTimeMovie]
+        let extra = ["ogg", "opus", "flac", "webm", "mkv", "aac", "amr"]
+            .compactMap { UTType(filenameExtension: $0) }
+        return known + extra
+    }()
+
+    // Все вызовы сокета — через ControlClient.background (не на главном потоке).
+    // Поколения отбрасывают устаревшие ответы: session_detail, пришедший после
+    // «назад»/удаления/открытия другой встречи, и старый sessions_list.
     private var searchTask: Task<Void, Never>?
+    private var detailGeneration = 0
+    private var listGeneration = 0
+    private var keepAudioInFlight = 0
+    private var changesObserver: AnyCancellable?
+
+    init() {
+        // AppModel и так раз в 3 с тянет sessions_list (дропдаун). Поменялись
+        // строки — обработка дошла, импорт готов, встречу удалили — подтягиваем
+        // список и открытую карточку, если окно на экране.
+        changesObserver = AppModel.shared.$recentMeetings
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.backgroundChanged() }
+    }
 
     func refresh() {
-        Task.detached { [weak self] in
-            let rows = (try? ControlClient.sessionsList()) ?? []
-            await MainActor.run { self?.meetings = rows }
+        listGeneration += 1
+        let generation = listGeneration
+        Task { [weak self] in
+            let rows = (try? await ControlClient.background {
+                try ControlClient.sessionsList()
+            }) ?? []
+            guard let self, self.listGeneration == generation else { return }
+            self.meetings = rows
         }
     }
 
@@ -42,48 +78,204 @@ final class LibraryModel: ObservableObject {
         searchTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
-            let hits = (try? ControlClient.search(trimmed)) ?? []
+            let hits = (try? await ControlClient.background {
+                try ControlClient.search(trimmed)
+            }) ?? []
             guard !Task.isCancelled else { return }
             self?.searchHits = hits
         }
     }
 
     func open(sessionId: String) {
+        detailGeneration += 1
+        let generation = detailGeneration
         loading = true
         selectedError = nil
-        Task.detached { [weak self] in
+        Task { [weak self] in
             do {
-                let detail = try ControlClient.sessionDetail(sessionId)
-                await MainActor.run {
-                    self?.selected = detail
-                    self?.loading = false
+                let detail = try await ControlClient.background {
+                    try ControlClient.sessionDetail(sessionId)
                 }
+                guard let self, self.detailGeneration == generation else { return }
+                if self.keepAudioInFlight == 0 || self.selected?.session.id != sessionId {
+                    self.keepAudioPending = nil
+                }
+                self.selected = detail
+                self.loading = false
             } catch {
-                await MainActor.run {
-                    self?.selectedError = error.localizedDescription
-                    self?.loading = false
-                }
+                guard let self, self.detailGeneration == generation else { return }
+                self.selectedError = error.localizedDescription
+                self.loading = false
             }
         }
     }
 
-    func closeDetail() {
+    /// Перечитать открытую карточку (после правки или фоновых изменений).
+    func reloadSelected() {
+        guard let sid = selected?.session.id else { return }
+        open(sessionId: sid)
+    }
+
+    /// К списку: закрыть карточку и отбросить её запросы в полёте.
+    func showList() {
+        detailGeneration += 1
         selected = nil
+        keepAudioPending = nil
+        loading = false
+    }
+
+    func closeDetail() {
+        showList()
         refresh()
     }
 
-    func resummarize(engine: String) {
+    private func backgroundChanged() {
+        guard LibraryWindow.isVisible else { return }
+        refresh()
+        reloadSelected()
+    }
+
+    /// После правки: список и открытая карточка, если это она.
+    private func afterMutation(_ sessionId: String) {
+        refresh()
+        if selected?.session.id == sessionId { reloadSelected() }
+    }
+
+    func resummarize() {
         guard let sid = selected?.session.id else { return }
-        Task.detached { [weak self] in
-            try? ControlClient.resummarize(sid, engine: engine)
-            await MainActor.run { self?.open(sessionId: sid) }
+        Task { [weak self] in
+            try? await ControlClient.background {
+                try ControlClient.resummarize(sid)
+            }
+            if self?.selected?.session.id == sid { self?.reloadSelected() }
         }
     }
 
     func retry(sessionId: String) {
-        Task.detached { [weak self] in
-            try? ControlClient.reprocess(sessionId)
-            await MainActor.run { self?.refresh() }
+        Task { [weak self] in
+            try? await ControlClient.background { try ControlClient.reprocess(sessionId) }
+            self?.refresh()
+        }
+    }
+
+    // --- P8: переименование
+
+    /// completion(false) — вьюха откатывает оптимистичный заголовок.
+    func rename(sessionId: String, title: String,
+                completion: @escaping @MainActor (Bool) -> Void) {
+        Task { [weak self] in
+            do {
+                try await ControlClient.background {
+                    try ControlClient.renameSession(sessionId, title: title)
+                }
+                completion(true)
+                self?.afterMutation(sessionId)
+            } catch {
+                completion(false)
+                LibraryWindow.showError("Не удалось переименовать встречу", error)
+            }
+        }
+    }
+
+    // --- P10: хранение аудио
+
+    func setKeepAudio(sessionId: String, keep: Bool) {
+        keepAudioPending = keep
+        keepAudioInFlight += 1
+        Task { [weak self] in
+            do {
+                try await ControlClient.background {
+                    try ControlClient.setKeepAudio(sessionId, keep: keep)
+                }
+                self?.keepAudioInFlight -= 1
+                self?.afterMutation(sessionId)
+            } catch {
+                self?.keepAudioInFlight -= 1
+                self?.keepAudioPending = nil
+                LibraryWindow.showError("Не удалось изменить хранение аудио", error)
+            }
+        }
+    }
+
+    // --- P14: удаление
+
+    func confirmDelete(_ session: SessionRow) {
+        let alert = NSAlert()
+        alert.messageText = "Удалить встречу «\(session.displayTitle)»?"
+        alert.informativeText = "Аудио, транскрипт и саммари будут удалены с этого Mac "
+            + "без возможности восстановления. Заметка в ~/MeetMind и сообщение "
+            + "в Telegram останутся."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Отмена")
+        let delete = alert.addButton(withTitle: "Удалить")
+        delete.hasDestructiveAction = true
+        let sid = session.id
+        LibraryWindow.present(alert) { [weak self] response in
+            guard response == .alertSecondButtonReturn else { return }
+            self?.delete(sessionId: sid)
+        }
+    }
+
+    private func delete(sessionId: String) {
+        Task { [weak self] in
+            do {
+                try await ControlClient.background { try ControlClient.deleteSession(sessionId) }
+                guard let self else { return }
+                if self.selected?.session.id == sessionId { self.showList() }
+                self.meetings.removeAll { $0.id == sessionId }
+                self.searchHits.removeAll { $0.sessionId == sessionId }
+                self.refresh()
+            } catch {
+                // busy — встречу сейчас пишут/обрабатывают: message демона по-русски.
+                LibraryWindow.showError("Не удалось удалить встречу", error)
+            }
+        }
+    }
+
+    // --- P13: импорт аудиофайла
+
+    func chooseAudioToImport() {
+        guard !importing else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Импортировать аудио"
+        panel.prompt = "Импортировать"
+        panel.message = "Аудио или видео встречи — BeeDott расшифрует его и сделает фоллоу-ап."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = Self.importableTypes
+        let handler: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.importAudio(url)
+        }
+        if let window = LibraryWindow.window {
+            panel.beginSheetModal(for: window, completionHandler: handler)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            panel.begin(completionHandler: handler)
+        }
+    }
+
+    private func importAudio(_ url: URL) {
+        let path = url.path
+        importing = true
+        Task { [weak self] in
+            do {
+                let sid = try await ControlClient.background {
+                    try ControlClient.importAudio(path: path)
+                }
+                guard let self else { return }
+                self.importing = false
+                // Чтобы новая встреча была видна и после «назад» к списку.
+                self.filter = .all
+                self.searchQuery = ""
+                self.searchHits = []
+                self.refresh()
+                self.open(sessionId: sid)
+            } catch {
+                self?.importing = false
+                LibraryWindow.showError("Не удалось импортировать «\(url.lastPathComponent)»", error)
+            }
         }
     }
 
@@ -139,12 +331,20 @@ enum LibraryWindow {
     private static var controller: NSWindowController?
     static let model = LibraryModel()
 
+    /// Окно Библиотеки, если оно на экране (родитель для листов NSAlert/NSOpenPanel).
+    static var window: NSWindow? {
+        guard let window = controller?.window, window.isVisible else { return nil }
+        return window
+    }
+
+    static var isVisible: Bool { window != nil }
+
     static func show(sessionId: String?) {
         if controller == nil {
             let view = LibraryRootView(model: model)
             let hosting = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: hosting)
-            window.title = "MeetMind — Встречи"
+            window.title = "BeeDott — Встречи"
             window.setContentSize(NSSize(width: 720, height: 520))
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.isReleasedWhenClosed = false
@@ -155,10 +355,39 @@ enum LibraryWindow {
         if let sessionId {
             model.open(sessionId: sessionId)
         } else {
-            model.selected = nil
+            model.showList()
         }
         NSApp.activate(ignoringOtherApps: true)
         controller?.showWindow(nil)
+    }
+
+    /// NSAlert листом на окне Библиотеки — не блокирует главный поток. Без окна —
+    /// модальный цикл через RunLoop (как confirmCancelRecording в AppModel):
+    /// runModal внутри MainActor-задачи застопорил бы главную очередь.
+    static func present(_ alert: NSAlert,
+                        completion: @escaping @MainActor (NSApplication.ModalResponse) -> Void = { _ in }) {
+        if let window {
+            alert.beginSheetModal(for: window) { response in
+                MainActor.assumeIsolated { completion(response) }
+            }
+        } else {
+            RunLoop.main.perform(inModes: [.common]) {
+                MainActor.assumeIsolated {
+                    NSApp.activate(ignoringOtherApps: true)
+                    completion(alert.runModal())
+                }
+            }
+        }
+    }
+
+    /// Ошибка действия в Библиотеке: у ошибок демона — его русский message.
+    static func showError(_ title: String, _ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = ControlClientError.userMessage(error)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        present(alert)
     }
 }
 
@@ -168,7 +397,10 @@ struct LibraryRootView: View {
     var body: some View {
         Group {
             if let detail = model.selected {
+                // id: при переходе к другой встрече состояние карточки (правка
+                // заголовка, вкладка) не переезжает на неё.
                 MeetingDetailView(model: model, detail: detail)
+                    .id(detail.session.id)
             } else {
                 LibraryListView(model: model)
             }
@@ -233,9 +465,36 @@ struct LibraryListView: View {
                  : "\(model.searchHits.count) совпадения")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.textTertiary(scheme))
+
+            importButton
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// Импорт аудиофайла (P13). Иконкой: строка тулбара и так плотная (поиск +
+    /// 4 чипа + итог), подпись — в подсказке и в пустом состоянии.
+    private var importButton: some View {
+        Button {
+            model.chooseAudioToImport()
+        } label: {
+            Group {
+                if model.importing {
+                    ProgressView().controlSize(.small).scaleEffect(0.6)
+                } else {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary(scheme))
+                }
+            }
+            .frame(width: 28, height: 28)
+            .background(Theme.chipFill(scheme), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.importing)
+        .help("Импортировать аудио…")
+        .accessibilityLabel("Импортировать аудио…")
     }
 
     @ViewBuilder private var content: some View {
@@ -298,6 +557,12 @@ struct LibraryListView: View {
             Text("Нажмите ⌘⇧R или кнопку в меню — первая встреча появится здесь сама.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.textTertiary(scheme))
+            Button("Импортировать аудио…") { model.chooseAudioToImport() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.accent(scheme))
+                .disabled(model.importing)
+                .padding(.top, 2)
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -367,9 +632,17 @@ struct MeetingListRow: View {
             HStack(spacing: 10) {
                 statusIcon.frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(meeting.displayTitle)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(meeting.displayTitle)
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+                        if meeting.keepsAudio {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Theme.textTertiary(scheme))
+                                .help("Аудио хранится")
+                        }
+                    }
                     metaLine
                         .font(.system(size: 11))
                         .lineLimit(1)
@@ -497,6 +770,12 @@ struct MeetingDetailView: View {
     let detail: SessionDetail
     @State private var tab: Tab = .followup
     @State private var copiedTimecode: String?
+    // P8: переименование — Enter/потеря фокуса сохраняет, Esc отменяет.
+    @State private var editingTitle = false
+    @State private var titleDraft = ""
+    /// Новое имя до ответа демона — без мигания старого заголовка.
+    @State private var optimisticTitle: String?
+    @FocusState private var titleFocused: Bool
     @Environment(\.colorScheme) private var scheme
 
     enum Tab: String, CaseIterable {
@@ -525,30 +804,129 @@ struct MeetingDetailView: View {
             .padding(.top, 4)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(detail.session.title?.isEmpty == false
-                     ? detail.session.title! : "Без названия")
-                    .font(.system(size: 18, weight: .bold))
+                titleView
                 Text(metaLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textTertiary(scheme))
+                if !detail.session.attendeeNames.isEmpty {
+                    Text("Участники: " + detail.session.attendeeNames.joined(separator: ", "))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary(scheme))
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                        .padding(.top, 2)
+                }
             }
             Spacer()
-            HStack(spacing: 4) {
-                Image(systemName: "lock.fill").font(.system(size: 10))
-                Text(detail.followup?.engine?.lowercased().contains("claude") == true
-                     ? "Саммари · Claude" : "Локально · Whisper large-v3")
-                    .font(.system(size: 11, weight: .medium))
+            VStack(alignment: .trailing, spacing: 8) {
+                HStack(spacing: 4) {
+                    Image(systemName: "lock.fill").font(.system(size: 10))
+                    Text(detail.followup?.engine?.lowercased().contains("claude") == true
+                         ? "Саммари · Claude" : "Локально · Whisper large-v3")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(Theme.green(scheme))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Theme.green(scheme).opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .stroke(Theme.green(scheme).opacity(0.28), lineWidth: 1))
+
+                keepAudioToggle
             }
-            .foregroundStyle(Theme.green(scheme))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Theme.green(scheme).opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6)
-                .stroke(Theme.green(scheme).opacity(0.28), lineWidth: 1))
         }
         .padding(.horizontal, 24)
         .padding(.top, 16)
         .padding(.bottom, 10)
+        .onChange(of: detail.session.title) { _, _ in optimisticTitle = nil }
+    }
+
+    // --- P8: заголовок с переименованием
+
+    @ViewBuilder private var titleView: some View {
+        if editingTitle {
+            TextField("Название встречи", text: $titleDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 18, weight: .bold))
+                .focused($titleFocused)
+                .onSubmit { commitTitle() }
+                .onExitCommand { cancelTitleEdit() }
+                .onChange(of: titleFocused) { _, focused in
+                    if !focused { commitTitle() }
+                }
+                .onAppear { DispatchQueue.main.async { titleFocused = true } }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Theme.chipFill(scheme), in: RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, -6)
+                .frame(maxWidth: 420, alignment: .leading)
+        } else {
+            HStack(spacing: 6) {
+                Text(optimisticTitle ?? detail.session.displayTitle)
+                    .font(.system(size: 18, weight: .bold))
+                    .onTapGesture { beginTitleEdit() }
+                Button {
+                    beginTitleEdit()
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary(scheme))
+                }
+                .buttonStyle(.plain)
+                .help("Переименовать")
+            }
+        }
+    }
+
+    private func beginTitleEdit() {
+        titleDraft = optimisticTitle ?? detail.session.title ?? ""
+        editingTitle = true
+    }
+
+    private func cancelTitleEdit() {
+        editingTitle = false
+    }
+
+    /// Enter и потеря фокуса приходят оба — сохраняет только первый.
+    private func commitTitle() {
+        guard editingTitle else { return }
+        editingTitle = false
+        let newTitle = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = optimisticTitle ?? detail.session.title ?? ""
+        guard !newTitle.isEmpty, newTitle != current else { return }
+        optimisticTitle = newTitle
+        model.rename(sessionId: detail.session.id, title: newTitle) { ok in
+            if !ok { optimisticTitle = nil }
+        }
+    }
+
+    // --- P10: хранение аудио
+
+    private var keepAudioToggle: some View {
+        let session = detail.session
+        // Аудио нет и уже не появится (обработка закончена). Пока идёт запись или
+        // конвертация импорта, файла может ещё не быть — тоггл доступен.
+        let audioGone = !session.hasAudioFile && session.isFinished
+        return VStack(alignment: .trailing, spacing: 2) {
+            Toggle(isOn: Binding(
+                get: { model.keepAudioPending ?? session.keepsAudio },
+                set: { model.setKeepAudio(sessionId: session.id, keep: $0) })
+            ) {
+                Text("Хранить аудио")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(audioGone ? Theme.textTertiary(scheme) : Theme.textSecondary(scheme))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .disabled(audioGone)
+            .help(audioGone ? "Аудио этой встречи уже удалено"
+                            : "Не удалять аудио этой встречи автоматически")
+            if audioGone {
+                Text("аудио уже удалено")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary(scheme))
+            }
+        }
     }
 
     private var metaLine: String {
@@ -618,7 +996,7 @@ struct MeetingDetailView: View {
                 section("Решения") {
                     bullets(f.decisions, square: true)
                 }
-                section("Action items") {
+                section("Задачи") {
                     if f.actionItems.isEmpty {
                         Text("нет").font(.system(size: 13))
                             .foregroundStyle(Theme.textTertiary(scheme))
@@ -761,24 +1139,16 @@ struct MeetingDetailView: View {
             }
             .buttonStyle(.plain)
 
-            Menu {
-                Button {
-                    model.resummarize(engine: "local")
-                } label: {
-                    Label("Локальная модель — на устройстве", systemImage: "cpu")
-                }
-                Button {
-                    model.resummarize(engine: "claude")
-                } label: {
-                    Label("Claude-бустер — в облако уйдёт текст", systemImage: "sparkle")
-                }
+            Button {
+                model.resummarize()
             } label: {
                 Text("Пересобрать саммари")
                     .font(.system(size: 12.5, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(Theme.chipFill(scheme), in: RoundedRectangle(cornerRadius: 8))
             }
-            .menuStyle(.borderlessButton)
-            .frame(width: 170, height: 30)
-            .background(Theme.chipFill(scheme), in: RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(.plain)
 
             Spacer()
 
@@ -792,6 +1162,16 @@ struct MeetingDetailView: View {
                     .foregroundStyle(Theme.textSecondary(scheme))
             }
             .buttonStyle(.plain)
+
+            Button {
+                model.confirmDelete(detail.session)
+            } label: {
+                Label("Удалить встречу", systemImage: "trash")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.recordingRed(scheme))
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 8)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 10)

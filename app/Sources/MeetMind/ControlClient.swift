@@ -25,16 +25,29 @@ enum ControlClientError: Error, LocalizedError {
         case .remote(let code, let message): return "\(code): \(message)"
         }
     }
+
+    /// Текст для NSAlert: у ошибок демона (busy, not_found…) message уже
+    /// человекочитаемый по-русски — показываем его без кода.
+    static func userMessage(_ error: Error) -> String {
+        if case ControlClientError.remote(_, let message) = error, !message.isEmpty {
+            return message
+        }
+        return error.localizedDescription
+    }
 }
 
 enum ControlClient {
     static let timeout: TimeInterval = 10
     private static let requestId = 1
 
-    static var socketPath: String {
+    /// Каталог данных демона (daemon/paths.py: app_dir) — сокет, БД, sessions/.
+    static var appSupportDir: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/MeetMind/control.sock")
-            .path
+            .appendingPathComponent("Library/Application Support/MeetMind")
+    }
+
+    static var socketPath: String {
+        appSupportDir.appendingPathComponent("control.sock").path
     }
 
     /// Один синхронный запрос-ответ: открывает новое unix-соединение, шлёт строку
@@ -138,15 +151,24 @@ enum ControlClient {
 
     /// audioPathOwner: "app" (Swift CaptureEngine пишет WAV сам, PLAN_v3 Task 4.1-4.2)
     /// | "daemon" (Python Recorder, дефолт демона при nil) | nil.
-    static func startRecording(title: String? = nil, audioPathOwner: String? = nil) throws -> [String: Any] {
+    /// title/attendees — контекст из Календаря (P8, CalendarContext); nil/пусто —
+    /// не передаём, встречу назовёт демон.
+    static func startRecording(title: String? = nil, attendees: [String]? = nil,
+                               audioPathOwner: String? = nil, source: String? = nil,
+                               meetingKey: String? = nil) throws -> [String: Any] {
         var params: [String: Any] = [:]
+        if let source { params["source"] = source }
+        if let meetingKey { params["meeting_key"] = meetingKey }
         if let title, !title.isEmpty { params["title"] = title }
+        if let attendees, !attendees.isEmpty { params["attendees"] = attendees }
         if let audioPathOwner { params["audio_path_owner"] = audioPathOwner }
         return try request("start_recording", params: params)
     }
 
-    static func stopRecording() throws -> [String: Any] {
-        try request("stop_recording")
+    /// sessionId — остановить конкретную запись (осиротевшую после краша
+    /// приложения); nil — активную.
+    static func stopRecording(sessionId: String? = nil) throws -> [String: Any] {
+        try request("stop_recording", params: sessionId.map { ["session_id": $0] } ?? [:])
     }
 
     static func cancelRecording() throws -> [String: Any] {
@@ -159,5 +181,19 @@ enum ControlClient {
 
     static func health() throws -> [String: Any] {
         try request("health")
+    }
+
+    // ------------------------------------------------------------ async-мост для UI
+
+    /// Синхронный вызов сокета на глобальной очереди: MainActor не стоит на
+    /// время запроса (до `timeout` секунд, если демон подвис). Для SwiftUI-моделей
+    /// (Библиотека) — `try await ControlClient.background { try ControlClient.… }`.
+    static func background<T: Sendable>(
+        _ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { cont in
+            DispatchQueue.global(qos: .userInitiated).async {
+                cont.resume(with: Result(catching: work))
+            }
+        }
     }
 }

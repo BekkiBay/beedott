@@ -29,13 +29,12 @@
 // (если их >1), поэтому переживёт устройство с другим числом каналов (например,
 // стерео AirPods-микрофон).
 //
-// Итоговый WAV: стерео 48kHz, PCM16, ch0 = микс микрофона, ch1 = микс тапа
-// (системный звук). Этот порядок каналов ОБРАТНЫЙ по отношению к
-// SPEC_v3 §3 ("ch0=система, ch1=мик") и PLAN_v3 Task 4.1
-// ("Process Tap → ch0; микрофон → ch1"); реализовано по явному ТЗ этой задачи.
-// См. финальный отчёт агента — расхождение зафиксировано, требуется решение на
-// уровне SPEC/PLAN (поменять документ или инвертировать каналы здесь) до M7
-// (диаризация в M7 Task 7.1 ожидает ch1=мик).
+// Итоговый WAV: стерео PCM16, ch0 = микс микрофона, ch1 = микс тапа (системный
+// звук) — тот же порядок зафиксирован в SPEC_v3 §3. Частота WAV = номинальная
+// частота aggregate-устройства (её задаёт микрофон, тап ресемплируется под неё):
+// 48 kHz у встроенного микрофона, 16–24 kHz у AirPods, 44,1 kHz у части USB.
+// Раньше WAV всегда помечался как 48 kHz, и звук с такими микрофонами
+// искажался (аудит T11).
 
 import AVFoundation
 import AudioToolbox
@@ -75,7 +74,10 @@ enum CaptureError: Error, LocalizedError {
 /// Не потокобезопасен для конкурентных start()/stop() — вызывающий (AppModel)
 /// сериализует действия через свою actionQueue.
 final class CaptureEngine {
-    static let sampleRate: Double = 48000
+    static let fallbackSampleRate: Double = 48000
+
+    /// Частота текущей записи (читается с aggregate-устройства в start()).
+    private(set) var sampleRate: Double = CaptureEngine.fallbackSampleRate
 
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggID = AudioObjectID(kAudioObjectUnknown)
@@ -97,6 +99,16 @@ final class CaptureEngine {
     private let levelLock = NSLock()
     private var micPeak: Float32 = 0
     private var tapPeak: Float32 = 0
+    /// Ручной mute: вместо микрофона в WAV пишется тишина (под тем же замком).
+    private var micMuted = false
+
+    /// Включить / выключить запись микрофона, не останавливая запись.
+    func setMicMuted(_ muted: Bool) {
+        levelLock.lock()
+        micMuted = muted
+        if muted { micPeak = 0 }
+        levelLock.unlock()
+    }
 
     /// Текущие пики (0…1) микрофона и системного звука; после чтения затухают
     /// сами по мере поступления новых буферов.
@@ -112,8 +124,9 @@ final class CaptureEngine {
             for s in samples { p = max(p, abs(s)) }
             return p
         }
-        let m = peak(mic), t = peak(tap)
+        let t = peak(tap)
         levelLock.lock()
+        let m = micMuted ? 0 : peak(mic)
         // мгновенная атака, медленное затухание — как в аппаратных VU-метрах
         micPeak = max(m, micPeak * 0.85)
         tapPeak = max(t, tapPeak * 0.85)
@@ -173,8 +186,11 @@ final class CaptureEngine {
             }
             aggID = newAggID
 
+            sampleRate = Self.nominalSampleRate(aggID) ?? Self.fallbackSampleRate
+            NSLog("CaptureEngine: частота aggregate-устройства %.0f Hz", sampleRate)
+
             guard let outFormat = AVAudioFormat(
-                commonFormat: .pcmFormatInt16, sampleRate: Self.sampleRate,
+                commonFormat: .pcmFormatInt16, sampleRate: sampleRate,
                 channels: 2, interleaved: true)
             else { throw CaptureError.fileUnavailable("не удалось построить выходной AVAudioFormat") }
             outputFormat = outFormat
@@ -319,13 +335,13 @@ final class CaptureEngine {
         else { return }
         pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
         guard let ch = pcmBuffer.int16ChannelData else { return }
-        // interleaved int16, 2 каналов: [ch0_mic, ch1_tap, ch0_mic, ch1_tap, ...]
-        let interleaved = ch[0]
-        for i in 0..<frameCount {
-            let micSample = i < micMono.count ? micMono[i] : 0
-            let tapSample = i < tapMono.count ? tapMono[i] : 0
-            interleaved[i * 2] = Self.floatToInt16(micSample)
-            interleaved[i * 2 + 1] = Self.floatToInt16(tapSample)
+        levelLock.lock()
+        let muted = micMuted
+        levelLock.unlock()
+        // interleaved int16, 2 канала: [ch0_mic, ch1_tap, ...]; mute → ch0 = тишина
+        let samples = AudioMix.interleave(mic: micMono, tap: tapMono, micMuted: muted)
+        samples.withUnsafeBufferPointer { src in
+            ch[0].update(from: src.baseAddress!, count: samples.count)
         }
 
         do {
@@ -368,11 +384,6 @@ final class CaptureEngine {
         return result
     }
 
-    private static func floatToInt16(_ sample: Float32) -> Int16 {
-        let clamped = max(-1.0, min(1.0, sample))
-        return Int16(clamped * Float32(Int16.max))
-    }
-
     // -------------------------------------------------------- CoreAudio helpers
 
     private static func makeTapDescription(mode: CaptureMode) throws -> CATapDescription {
@@ -411,6 +422,18 @@ final class CaptureEngine {
             throw CaptureError.tapUnavailable("kAudioTapPropertyFormat err=\(err)")
         }
         return asbd
+    }
+
+    private static func nominalSampleRate(_ deviceID: AudioObjectID) -> Double? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var rate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        let err = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &rate)
+        guard err == noErr, rate > 0 else { return nil }
+        return rate
     }
 
     private static func defaultInputDeviceID() -> AudioObjectID? {

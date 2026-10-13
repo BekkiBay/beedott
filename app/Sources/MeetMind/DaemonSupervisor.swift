@@ -38,16 +38,42 @@ final class DaemonSupervisor: ObservableObject {
     private let logURL: URL
     private let workQueue = DispatchQueue(label: "com.jvmshid.meetmind.supervisor")
 
-    private var daemonCommand: [String] {
+    /// Последняя ошибка запуска — чтобы не писать одно и то же в лог каждые 60с.
+    private var lastSpawnFailure: String?
+
+    private var daemonCommand: [String]? {
         if let saved = UserDefaults.standard.array(forKey: "daemonCommand") as? [String],
            !saved.isEmpty {
             return saved
         }
-        return ["/opt/homebrew/bin/uv", "run", "python", "main.py"]
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = ["/opt/homebrew/bin/uv", "/usr/local/bin/uv",
+                          "\(home)/.local/bin/uv", "\(home)/.cargo/bin/uv"]
+        guard let uv = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        else { return nil }
+        return [uv, "run", "python", "main.py"]
     }
 
-    private var repoPath: String {
-        UserDefaults.standard.string(forKey: "repoPath") ?? "/Users/b.botirov/AIApp/meetmind"
+    /// Каталог репозитория с main.py (аудит T2: путь больше не зашит в код —
+    /// после переезда репо демон не стартовал). Порядок: UserDefaults repoPath →
+    /// env MEETMIND_REPO → dev-сборка `<repo>/app/build/MeetMind.app`.
+    private var repoPath: String? {
+        let fm = FileManager.default
+        func isRepo(_ path: String) -> Bool {
+            fm.fileExists(atPath: (path as NSString).appendingPathComponent("main.py"))
+        }
+        if let saved = UserDefaults.standard.string(forKey: "repoPath"), isRepo(saved) {
+            return saved
+        }
+        if let env = ProcessInfo.processInfo.environment["MEETMIND_REPO"], isRepo(env) {
+            return env
+        }
+        let derived = Bundle.main.bundleURL
+            .deletingLastPathComponent()  // build/
+            .deletingLastPathComponent()  // app/
+            .deletingLastPathComponent()  // <repo>/
+            .path
+        return isRepo(derived) ? derived : nil
     }
 
     init() {
@@ -138,10 +164,21 @@ final class DaemonSupervisor: ObservableObject {
         process = nil
     }
 
+    private func spawnFailed(_ message: String) {
+        guard message != lastSpawnFailure else { return }
+        lastSpawnFailure = message
+        log(message)
+    }
+
     private func spawnProcess() {
-        let cmd = daemonCommand
-        guard !cmd.isEmpty else {
-            log("daemonCommand пуст — не могу запустить демон")
+        guard let repoPath else {
+            spawnFailed("не найден репозиторий MeetMind (нет main.py) — задайте путь: "
+                        + "defaults write com.jvmshid.meetmind repoPath <путь к репо>")
+            return
+        }
+        guard let cmd = daemonCommand else {
+            spawnFailed("не найден uv (/opt/homebrew/bin, /usr/local/bin, ~/.local/bin) — "
+                        + "задайте команду: defaults write com.jvmshid.meetmind daemonCommand -array …")
             return
         }
         let p = Process()
@@ -162,11 +199,15 @@ final class DaemonSupervisor: ObservableObject {
             try p.run()
             process = p
             weSpawned = true
+            lastSpawnFailure = nil
             log("демон запущен: \(cmd.joined(separator: " ")) (cwd=\(repoPath), pid=\(p.processIdentifier))")
         } catch {
-            log("не удалось запустить демон: \(error.localizedDescription)")
+            spawnFailed("не удалось запустить демон: \(error.localizedDescription)")
         }
     }
+
+    /// Погасит ли Quit демона (true, только если это мы его спавнили).
+    var terminatesDaemonOnQuit: Bool { weSpawned }
 
     /// Вызывается при Quit приложения. Останавливает демон, только если это МЫ его
     /// когда-то заспавнили (внешне запущенный демон не трогаем).

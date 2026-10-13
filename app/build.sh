@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# app/build.sh — собирает MeetMind.app голым swiftc (без Xcode-проекта, см.
+# app/build.sh — собирает BeeDott.app (бывший MeetMind) голым swiftc (без Xcode-проекта, см.
 # spikes/SPIKE_RESULTS.md: swiftc + ad-hoc подпись работают на этой машине).
 # Идемпотентен — можно гонять сколько угодно раз подряд.
 set -euo pipefail
@@ -7,13 +7,13 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$APP_DIR/Sources/MeetMind"
 BUILD_DIR="$APP_DIR/build"
-APP_BUNDLE="$BUILD_DIR/MeetMind.app"
+APP_BUNDLE="$BUILD_DIR/BeeDott.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
-BIN_NAME="MeetMind"
+BIN_NAME="BeeDott"
 BUNDLE_ID="com.jvmshid.meetmind"
 
-echo "== MeetMind build =="
+echo "== BeeDott build =="
 
 mkdir -p "$MACOS_DIR"
 
@@ -43,6 +43,13 @@ swiftc -O \
 
 echo "-- Info.plist -> $CONTENTS/Info.plist"
 cp "$APP_DIR/Info.plist" "$CONTENTS/Info.plist"
+
+# Иконка (app/Tools/app_icon.sh рисует её кодом). Без неё сборка всё равно идёт.
+if [ -f "$APP_DIR/Resources/AppIcon.icns" ]; then
+    echo "-- AppIcon.icns -> $CONTENTS/Resources"
+    mkdir -p "$CONTENTS/Resources"
+    cp "$APP_DIR/Resources/AppIcon.icns" "$CONTENTS/Resources/AppIcon.icns"
+fi
 
 echo "-- codesign (ad-hoc, identifier=$BUNDLE_ID)"
 codesign --force -s - --identifier "$BUNDLE_ID" "$APP_BUNDLE"

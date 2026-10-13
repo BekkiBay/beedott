@@ -1,6 +1,7 @@
 // HotKey.swift — глобальные хоткеи через Carbon RegisterEventHotKey.
 //
-// ⌘⇧R (keyCode 15) — toggle start/stop; ⌘⇧X (keyCode 7) — cancel.
+// ⌘⇧R (keyCode 15) — toggle start/stop; ⌃⌥⌘X (keyCode 7) — cancel (с подтверждением);
+// ⌃⌥⌘M (keyCode 46) — mute/unmute микрофона в идущей записи.
 // RegisterEventHotKey не требует Accessibility permission (в отличие от
 // CGEventTap/NSEvent.addGlobalMonitorForEvents), работает даже когда MeetMind
 // не активное приложение (LSUIElement, без Dock/фокуса).
@@ -17,6 +18,7 @@ final class HotKeyManager {
     enum KeyCode {
         static let r: UInt32 = 15
         static let x: UInt32 = 7
+        static let m: UInt32 = 46
     }
 
     private var hotKeyRefs: [UInt32: EventHotKeyRef] = [:]
