@@ -72,6 +72,8 @@ final class IslandController {
     private var hover = HoverTracker()
     private var hoverTimer: Timer?
     private var shownEvent: CalendarEventInfo?
+    /// Островок сейчас показывает идущую запись — строке меню дублировать не нужно.
+    private(set) var showsRecording = false
     private var layout: IslandLayout?
     private var wasCapturing = false
     private weak var model: AppModel?
@@ -133,6 +135,7 @@ final class IslandController {
             mode = .hidden
         }
         shownEvent = (mode != .hidden && !recording) ? upcoming : nil
+        showsRecording = recording && mode != .hidden
         apply(mode)
     }
 

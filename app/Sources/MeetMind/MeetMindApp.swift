@@ -92,6 +92,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var upcomingEvents: [CalendarEventInfo] = []
     nonisolated static let islandKey = "notchIsland"
     private var island: IslandController?
+    /// Запись видна в островке — строка меню её не дублирует. Островок выключен
+    /// или спрятан на время захвата экрана — таймер снова в строке меню.
+    @Published private(set) var islandShowsRecording = false
 
     let supervisor = DaemonSupervisor()
 
@@ -415,7 +418,7 @@ final class AppModel: ObservableObject {
             micLevel = 0
             systemLevel = 0
         }
-        island?.tick()
+        tickIsland()
     }
 
     // MARK: - mute микрофона
@@ -452,7 +455,13 @@ final class AppModel: ObservableObject {
     func setIslandEnabled(_ enabled: Bool) {
         islandEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: AppModel.islandKey)
+        tickIsland()
+    }
+
+    private func tickIsland() {
         island?.tick()
+        let shows = island?.showsRecording ?? false
+        if islandShowsRecording != shows { islandShowsRecording = shows }
     }
 
     /// «Записать» в напоминании островка. Встреча с Meet — запись остановится
@@ -751,10 +760,11 @@ struct MenuBarLabel: View {
 
     var body: some View {
         // MenuBarExtra-label ограничен (template-рендер, без кастомного фона):
-        // плашку записи из макета отображаем как symbol + tabular-таймер.
+        // плашку записи из макета отображаем как symbol + tabular-таймер —
+        // только когда запись не видна в островке.
         if !model.daemonHealthy {
             Image(systemName: "exclamationmark.triangle")
-        } else if model.recordingSessionId != nil {
+        } else if model.recordingSessionId != nil, !model.islandShowsRecording {
             HStack(spacing: 3) {
                 Image(systemName: "record.circle.fill")
                 Text(model.elapsedText).monospacedDigit()
