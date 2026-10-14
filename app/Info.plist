@@ -2,37 +2,37 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleIdentifier</key>
-	<string>com.jvmshid.meetmind</string>
-	<key>CFBundleName</key>
-	<string>BeeDott</string>
 	<key>CFBundleDisplayName</key>
 	<string>BeeDott</string>
 	<key>CFBundleExecutable</key>
 	<string>BeeDott</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.jvmshid.meetmind</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>BeeDott</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>3.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>LSUIElement</key>
-	<true/>
+	<string>2</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.4</string>
-	<key>NSHighResolutionCapable</key>
+	<key>LSUIElement</key>
 	<true/>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>BeeDott записывает звук со встречи через микрофон, чтобы сделать транскрипт и краткое резюме после звонка.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>BeeDott захватывает системный звук собеседников (Process Tap) во время встречи, чтобы сделать транскрипт и краткое резюме после звонка.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>BeeDott берёт из календаря название и участников текущей встречи, чтобы подписать запись и указать участников в фоллоу-апе.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>BeeDott берёт из календаря название и участников текущей встречи, чтобы подписать запись и указать участников в фоллоу-апе.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>BeeDott записывает звук со встречи через микрофон, чтобы сделать транскрипт и краткое резюме после звонка.</string>
 </dict>
 </plist>
