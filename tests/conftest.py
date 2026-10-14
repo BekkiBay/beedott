@@ -30,3 +30,11 @@ def _reset_notification_hub():
     notifier._reset_hub()
     yield
     notifier._reset_hub()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_appdir(tmp_path, monkeypatch):
+    """Каждый тест — со своей папкой приложения: иначе load_instructions()
+    прочитает настоящий followup_instructions.md пользователя. Тесты со своей
+    фикстурой appdir ставят MEETMIND_APPDIR позже и переопределяют этот."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path / "isolated-app"))
