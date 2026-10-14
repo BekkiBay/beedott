@@ -1,5 +1,5 @@
 // SetupWizard.swift — мастер первичной настройки (4 шага): распознавание речи,
-// ключ Anthropic, Telegram (по желанию), готово.
+// ключ Anthropic + модель и инструкция фоллоу-апа, Telegram (по желанию), готово.
 // Спека: docs/superpowers/specs/2026-10-13-first-run-setup-design.md.
 // Вся работа — RuntimeManager (uv sync, python -m daemon.setup) на фоновой очереди.
 
@@ -10,11 +10,15 @@ struct SetupStatus {
     var model: Bool
     var summary: String?
     var telegram: Bool
+    var summaryModel: String?
+    var summaryCustom: Bool
 
     init(_ r: SetupResult) {
         model = r.bool("model")
         summary = r.string("summary")
         telegram = r.bool("telegram")
+        summaryModel = r.string("summary_model")
+        summaryCustom = r.bool("summary_custom")
     }
 }
 
@@ -39,6 +43,11 @@ final class SetupModel: ObservableObject {
     @Published var keyPhase: Phase = .idle
     @Published var summaryMode: String?
     @Published var replacingKey = false
+    /// Нет status (чистый Mac, рантайма ещё нет) — дефолт: ANTHROPIC_MODEL и
+    /// файла инструкции там тоже нет.
+    @Published var summaryModel = RuntimeLogic.defaultSummaryModel
+    @Published var summaryModelPhase: Phase = .idle
+    @Published var instructionsCustom = false
     // шаг 3
     @Published var botToken = ""
     @Published var botName: String?
@@ -61,6 +70,8 @@ final class SetupModel: ObservableObject {
             if status.model { modelPhase = .done }
         }
         summaryMode = status?.summary
+        summaryModel = status?.summaryModel ?? RuntimeLogic.defaultSummaryModel
+        instructionsCustom = status?.summaryCustom ?? false
         telegramConfigured = status?.telegram ?? false
         step = !speechReady ? .speech : (summaryMode == nil ? .summary : .telegram)
     }
@@ -70,7 +81,7 @@ final class SetupModel: ObservableObject {
     /// Идёт фоновая работа — при повторном открытии окна модель переиспользуется,
     /// иначе вторая загрузка/второй getUpdates столкнулись бы с первыми.
     var isBusy: Bool {
-        [runtimePhase, modelPhase, keyPhase, tokenPhase, connectPhase].contains(.running)
+        [runtimePhase, modelPhase, keyPhase, summaryModelPhase, tokenPhase, connectPhase].contains(.running)
     }
 
     // MARK: шаг 1
@@ -155,6 +166,29 @@ final class SetupModel: ObservableObject {
                 self.applySettings()
             }
         }
+    }
+
+    func setSummaryModel(_ id: String) {
+        guard id != summaryModel, summaryModelPhase != .running else { return }
+        let previous = summaryModel
+        summaryModel = id
+        summaryModelPhase = .running
+        queue.async { [runtime] in
+            let result = runtime.runSetup("set-model", stdin: id)
+            Task { @MainActor in
+                if case .error(let code, let message) = result {
+                    self.summaryModel = previous
+                    self.summaryModelPhase = .failed(RuntimeLogic.setupErrorText(code: code, message: message))
+                    return
+                }
+                self.summaryModelPhase = .done
+                self.applySettings()
+            }
+        }
+    }
+
+    func openInstructions() {
+        InstructionsWindow.show { custom in self.instructionsCustom = custom }
     }
 
     // MARK: шаг 3
@@ -440,6 +474,13 @@ private struct SummaryStepView: View {
                 }
                 .padding(12)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Theme.rowFill(scheme)))
+                if mode == "api" { modelPicker }
+                HStack(spacing: 8) {
+                    Button("Инструкция для фоллоу-апов…") { model.openInstructions() }
+                    Text(model.instructionsCustom ? "своя" : "стандартная")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textTertiary(scheme))
+                }
             } else {
                 SecureField("sk-ant-…", text: $model.apiKey)
                     .textFieldStyle(.roundedBorder)
@@ -463,6 +504,36 @@ private struct SummaryStepView: View {
                 Text(note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary(scheme))
             }
         }
+    }
+
+    private var modelPicker: some View {
+        let known = RuntimeLogic.summaryModels.first { $0.id == model.summaryModel }
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Модель").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if model.summaryModelPhase == .running { ProgressView().controlSize(.small) }
+                Picker("", selection: Binding(get: { model.summaryModel },
+                                              set: { model.setSummaryModel($0) })) {
+                    ForEach(RuntimeLogic.summaryModels, id: \.id) { Text($0.title).tag($0.id) }
+                    if known == nil {
+                        Text("\(model.summaryModel) (вручную)").tag(model.summaryModel)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(model.summaryModelPhase == .running)
+            }
+            Text(known?.caption ?? "Модель задана вручную в config.env")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textSecondary(scheme))
+            if case .failed(let text) = model.summaryModelPhase {
+                Text(text).font(.system(size: 12)).foregroundStyle(Theme.recordingRed(scheme))
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.rowFill(scheme)))
     }
 
     @ViewBuilder private var keyStatus: some View {

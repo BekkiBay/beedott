@@ -30,6 +30,27 @@ func render(_ name: String, dark: Bool = false, _ configure: (SetupModel) -> Voi
     print("saved \(url.path)")
 }
 
+/// Окно инструкции фоллоу-апа (InstructionsWindow) в состоянии «загружено».
+@MainActor
+func renderInstructions(_ name: String) {
+    let model = InstructionsModel()
+    model.text = "Ты пишешь фоллоу-ап по рабочей встрече для участника, который хочет за минуту понять главное.\n\nРазделы фоллоу-апа:\n- \"context\": 2–3 предложения — о чём встреча и главный итог.\n- \"discussed\": самые важные темы — не больше 6 пунктов.\n- \"action_items\": конкретные поручения, у которых есть исполнитель."
+    model.load = .ready
+    let view = NSHostingView(rootView: InstructionsView(model: model))
+    view.frame = NSRect(x: 0, y: 0, width: 640, height: 560)
+    let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.appearance = NSAppearance(named: .aqua)
+    window.contentView = view
+    window.backgroundColor = .windowBackgroundColor
+    view.layoutSubtreeIfNeeded()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    let url = outDir.appendingPathComponent("\(name).png")
+    try? rep.representation(using: .png, properties: [:])?.write(to: url)
+    print("saved \(url.path)")
+}
+
 MainActor.assumeIsolated {
     render("1-speech-idle") { m in
         m.runtimePhase = .idle; m.modelPhase = .idle; m.step = .speech
@@ -50,6 +71,11 @@ MainActor.assumeIsolated {
     render("5-summary-configured") { m in
         m.step = .summary; m.runtimePhase = .done; m.modelPhase = .done; m.summaryMode = "api"
     }
+    render("5b-summary-custom-model") { m in
+        m.step = .summary; m.runtimePhase = .done; m.modelPhase = .done; m.summaryMode = "api"
+        m.summaryModel = "claude-fable-5-1"; m.instructionsCustom = true
+        m.applyNote = "Применится после текущей встречи"
+    }
     render("6-telegram-waiting") { m in
         m.step = .telegram; m.runtimePhase = .done; m.modelPhase = .done; m.summaryMode = "api"
         m.botToken = "123456:ABC"; m.botName = "beedott_notes_bot"; m.tokenPhase = .done
@@ -62,4 +88,5 @@ MainActor.assumeIsolated {
         m.step = .speech; m.runtimePhase = .done
         m.modelPhase = .running; m.modelDone = 671_088_640; m.modelTotal = 1_613_979_758
     }
+    renderInstructions("9-instructions")
 }
