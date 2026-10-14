@@ -53,7 +53,24 @@ enum RuntimeMode: Equatable {
     case bundled
 }
 
+/// Модель саммари в мастере. Тот же список id — daemon/setup.py SUMMARY_MODELS.
+struct SummaryModelOption: Equatable {
+    let id: String
+    let title: String
+    let caption: String
+}
+
 enum RuntimeLogic {
+    static let defaultSummaryModel = "claude-opus-5-5"
+    static let summaryModels: [SummaryModelOption] = [
+        SummaryModelOption(id: "claude-opus-5-5", title: "Opus 5.5",
+                           caption: "По умолчанию — лучшее качество за свои деньги"),
+        SummaryModelOption(id: "claude-sonnet-5-5", title: "Sonnet 5.5",
+                           caption: "Быстрее и в 2 раза дешевле"),
+        SummaryModelOption(id: "claude-fable-5-1", title: "Fable 5.1",
+                           caption: "Самая сильная, в 2,5 раза дороже Opus"),
+    ]
+
     /// Порядок поиска репо — как раньше в DaemonSupervisor (аудит T2):
     /// UserDefaults repoPath → env MEETMIND_REPO → `<repo>/app/build/BeeDott.app`.
     static func resolveMode(savedRepo: String?, envRepo: String?, derivedRepo: String,
@@ -111,6 +128,8 @@ enum RuntimeLogic {
         case "invalid_token": return "Токен не подходит — скопируй его из @BotFather целиком"
         case "bot_busy": return "Этот бот уже подключён к другому сервису — создай нового в @BotFather"
         case "timeout": return "Бот не получил /start — открой его в Telegram и нажми «Запустить»"
+        case "bad_model": return "Такой модели нет в списке"
+        case "too_long": return "Инструкция длиннее 20 000 символов — сократи"
         default: return "Что-то пошло не так: \(message)"
         }
     }

@@ -322,4 +322,12 @@ do {
     try? FileManager.default.removeItem(atPath: path)
 }
 
+// 24. Настройки саммари: модели в мастере и тексты ошибок команд.
+do {
+    check(RuntimeLogic.summaryModels.map(\.id) == ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"], "три модели по порядку")
+    check(RuntimeLogic.summaryModels.contains { $0.id == RuntimeLogic.defaultSummaryModel }, "дефолт в списке")
+    check(RuntimeLogic.setupErrorText(code: "bad_model", message: "").contains("модели"), "текст bad_model")
+    check(RuntimeLogic.setupErrorText(code: "too_long", message: "").contains("20 000"), "текст too_long")
+}
+
 if failures == 0 { print("OK — все тесты прошли") } else { print("\(failures) провалено"); exit(1) }

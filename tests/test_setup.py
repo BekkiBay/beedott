@@ -1,6 +1,8 @@
 """daemon/setup.py — команды мастера первичной настройки (JSON-строки в stdout)."""
 import io
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -430,3 +432,10 @@ def test_summary_settings(appdir, capsys, monkeypatch):
     assert ev["model"] == "claude-opus-5-5"
     assert ev["instructions"] == "Своя." and ev["custom"] is True
     assert ev["default_instructions"] == summarizer.DEFAULT_INSTRUCTIONS
+
+
+def test_summary_models_match_swift():
+    swift = Path(__file__).parent.parent / "app/Sources/MeetMind/RuntimeLogic.swift"
+    ids = set(re.findall(r'id: "(claude-[a-z0-9-]+)"', swift.read_text(encoding="utf-8")))
+    assert ids == set(setup.SUMMARY_MODELS)
+    assert config.DEFAULT_ANTHROPIC_MODEL in setup.SUMMARY_MODELS
