@@ -3,10 +3,10 @@
 // headless до запуска GUI (PLAN_v3 Task 4.1-4.2).
 //
 // LSUIElement-приложение (без Dock, см. Info.plist). Иконка в меню-баре:
-// idle / recording / демон недоступен. Хоткеи: ⌘⇧R — старт/стоп, ⌃⌥⌘X — отмена
-// записи с подтверждением (аудит T8: ⌘⇧X без вопроса удалял запись и перехватывал
-// зачёркивание в Slack/Docs). Quit сначала останавливает и сохраняет запись,
-// потом гасит демона, если это мы его спавнили.
+// idle / recording / демон недоступен. Хоткеи: ⌘⇧R — старт/стоп, ⌃⌥⌘M или Fn+F5 — mute
+// микрофона в записи, ⌃⌥⌘X — отмена записи с подтверждением (аудит T8: ⌘⇧X без
+// вопроса удалял запись и перехватывал зачёркивание в Slack/Docs). Quit сначала
+// останавливает и сохраняет запись, потом гасит демона, если это мы его спавнили.
 
 import SwiftUI
 import AppKit
@@ -71,6 +71,11 @@ final class AppModel: ObservableObject {
     /// Ручной mute микрофона в идущей записи (только нативная запись Swift).
     @Published private(set) var micMuted: Bool = false
     @Published private(set) var canMute: Bool = false
+    /// F5 (на MacBook — Fn+F5) занят под mute только пока canMute: глобальный
+    /// хоткей отбирает клавишу у всех приложений. Tried — не долбить
+    /// RegisterEventHotKey каждые 3 с, если F5 занял кто-то другой.
+    private var muteKeyId: UInt32?
+    private var muteKeyTried = false
 
     // --- автозапуск и автодетект звонков
     @Published private(set) var launchAtLogin: Bool = false
@@ -351,6 +356,7 @@ final class AppModel: ObservableObject {
                 let mutable = recording != nil && self.capture.engine != nil
                 Task { @MainActor in
                     self.canMute = mutable
+                    self.syncMuteKey()
                     if recordingNow == nil { self.micMuted = false }
                     self.calendarStatus = calendar
                     if let upcoming { self.upcomingEvents = upcoming }
@@ -424,6 +430,21 @@ final class AppModel: ObservableObject {
             self?.capture.engine?.setMicMuted(muted)
         }
         NSLog("MeetMind: микрофон в записи %@", muted ? "выключен" : "включён")
+    }
+
+    private func syncMuteKey() {
+        if canMute, !muteKeyTried {
+            muteKeyTried = true
+            muteKeyId = HotKeyManager.shared.register(
+                keyCode: HotKeyManager.KeyCode.f5, modifiers: 0
+            ) {
+                Task { @MainActor in AppModel.shared.toggleMute() }
+            }
+        } else if !canMute, muteKeyTried {
+            if let id = muteKeyId { HotKeyManager.shared.unregister(id: id) }
+            muteKeyId = nil
+            muteKeyTried = false
+        }
     }
 
     // MARK: - островок у чёлки

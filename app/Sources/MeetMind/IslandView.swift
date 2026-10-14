@@ -201,7 +201,7 @@ struct IslandView: View {
                             .background(Circle().fill(Color.white.opacity(muted ? 0.92 : 0.16)))
                     }
                     .buttonStyle(.plain)
-                    .help(muted ? "Включить микрофон (⌃⌥⌘M)" : "Не записывать микрофон (⌃⌥⌘M)")
+                    .help(muted ? "Включить микрофон (Fn+F5 или ⌃⌥⌘M)" : "Не записывать микрофон (Fn+F5 или ⌃⌥⌘M)")
                     Button(action: onStop) {
                         HStack(spacing: 5) {
                             RoundedRectangle(cornerRadius: 1.5)

@@ -62,7 +62,7 @@ struct DropdownView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(model.micMuted ? "Включить микрофон (⌃⌥⌘M)" : "Не записывать микрофон (⌃⌥⌘M)")
+                .help(model.micMuted ? "Включить микрофон (Fn+F5 или ⌃⌥⌘M)" : "Не записывать микрофон (Fn+F5 или ⌃⌥⌘M)")
             }
         }
         .padding(.horizontal, 10)
