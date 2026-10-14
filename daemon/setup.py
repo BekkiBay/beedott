@@ -31,6 +31,10 @@ from daemon.paths import app_dir  # noqa: E402
 # Тот же репозиторий, что грузит Transcriber (daemon/transcriber.py) — импорт
 # transcriber тянет soundfile, поэтому копия; совпадение проверяет тест.
 MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
+# Модели саммари в мастере. Тот же список с подписями — RuntimeLogic.summaryModels
+# (Swift), совпадение проверяет tests/test_setup.py.
+SUMMARY_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1")
+MAX_INSTRUCTIONS = 20_000
 WEIGHT_FILES = ("weights.safetensors", "weights.npz")
 
 _NETWORK_ERRORS = {"ConnectionError", "TransportError", "ConnectError", "TimeoutException",
@@ -150,7 +154,50 @@ def cmd_status() -> dict:
         if claude_auth.claude_bin():
             summary = "claude_cli"
     telegram = bool(_setting("TELEGRAM_BOT_TOKEN") and _setting("TELEGRAM_CHAT_ID"))
-    return {"model": model_cached(), "summary": summary, "telegram": telegram}
+    from daemon import summarizer
+    return {"model": model_cached(), "summary": summary, "telegram": telegram,
+            "summary_model": _summary_model(),
+            "summary_custom": summarizer.custom_instructions() is not None}
+
+
+def _summary_model() -> str:
+    import config
+    return _setting("ANTHROPIC_MODEL") or config.DEFAULT_ANTHROPIC_MODEL
+
+
+def cmd_summary_settings() -> dict:
+    from daemon import summarizer
+    custom = summarizer.custom_instructions()
+    return {"model": _summary_model(),
+            "instructions": custom or summarizer.DEFAULT_INSTRUCTIONS,
+            "custom": custom is not None,
+            "default_instructions": summarizer.DEFAULT_INSTRUCTIONS}
+
+
+def cmd_set_model(model: str) -> dict:
+    model = model.strip()
+    if model not in SUMMARY_MODELS:
+        raise SetupError("bad_model", f"неизвестная модель: {model}")
+    import config
+    config.update_config_env("ANTHROPIC_MODEL", model)
+    return {"model": model}
+
+
+def cmd_set_instructions(text: str) -> dict:
+    """Пустая или стандартная инструкция — файл удаляется (сброс). Swift
+    дописывает к stdin перевод строки — сравниваем после strip()."""
+    from daemon import summarizer
+    text = text.strip()
+    path = summarizer.instructions_path()
+    if not text or text == summarizer.DEFAULT_INSTRUCTIONS.strip():
+        path.unlink(missing_ok=True)
+        return {"custom": False}
+    if len(text) > MAX_INSTRUCTIONS:
+        raise SetupError("too_long", f"{len(text)} символов, предел {MAX_INSTRUCTIONS}")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return {"custom": True}
 
 
 def _classify(exc: BaseException) -> str:
@@ -268,9 +315,15 @@ COMMANDS = {
     "check-key": cmd_check_key,
     "telegram-check": cmd_telegram_check,
     "telegram-connect": cmd_telegram_connect,
+    "summary-settings": cmd_summary_settings,
+    "set-model": cmd_set_model,
+    "set-instructions": cmd_set_instructions,
 }
 # Команды, которым нужен секрет из stdin (первая строка).
 SECRET_COMMANDS = {"check-key", "telegram-check", "telegram-connect"}
+# Аргумент из первой строки stdin (секреты и id модели) или весь stdin (текст).
+LINE_COMMANDS = SECRET_COMMANDS | {"set-model"}
+TEXT_COMMANDS = {"set-instructions"}
 # Второй строкой stdin — одноразовый код из ссылки на бота.
 CODE_COMMANDS = {"telegram-connect"}
 
@@ -281,10 +334,16 @@ def main(argv: list[str] | None = None) -> int:
         emit("error", code="internal", message="команды: " + ", ".join(COMMANDS))
         return 2
     name = argv[0]
-    secret = sys.stdin.readline().strip() if name in SECRET_COMMANDS else None
+    if name in TEXT_COMMANDS:
+        arg = sys.stdin.read()
+    elif name in LINE_COMMANDS:
+        arg = sys.stdin.readline().strip()
+    else:
+        arg = None
+    secret = arg if name in SECRET_COMMANDS else None
     extra = [sys.stdin.readline().strip()] if name in CODE_COMMANDS else []
     try:
-        result = COMMANDS[name](secret, *extra) if name in SECRET_COMMANDS else COMMANDS[name]()
+        result = COMMANDS[name](arg, *extra) if arg is not None else COMMANDS[name]()
     except Exception as exc:  # noqa: BLE001 — любой сбой → событие error для мастера
         code = exc.code if isinstance(exc, SetupError) else _classify(exc)
         message = str(exc) if isinstance(exc, SetupError) else _last_line(exc)

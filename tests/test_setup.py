@@ -7,7 +7,7 @@ import pytest
 # config при первом импорте делает load_dotenv(репо/.env) — импортируем до
 # фикстур, иначе он вернёт в os.environ ключи, которые фикстура удалила.
 import config  # noqa: F401
-from daemon import setup
+from daemon import setup, summarizer
 
 
 def events(capsys) -> list[dict]:
@@ -17,7 +17,8 @@ def events(capsys) -> list[dict]:
 @pytest.fixture
 def appdir(tmp_path, monkeypatch):
     monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path / "app"))
-    for key in ("SUMMARY_BACKEND", "ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+    for key in ("SUMMARY_BACKEND", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+                "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(config, "DEV_ENV_PATH", tmp_path / "no-dev.env")
     monkeypatch.setattr(setup, "model_cached", lambda repo=setup.MODEL_REPO: True)
@@ -33,7 +34,8 @@ def write_config(appdir, text):
 
 def test_status_clean_mac(appdir, capsys):
     assert setup.main(["status"]) == 0
-    assert events(capsys) == [{"event": "ok", "model": True, "summary": None, "telegram": False}]
+    assert events(capsys) == [{"event": "ok", "model": True, "summary": None, "telegram": False,
+                               "summary_model": "claude-opus-5-5", "summary_custom": False}]
 
 
 def test_status_api_key(appdir, capsys):
@@ -373,3 +375,58 @@ def test_imageio_ffmpeg_has_what_daemon_uses():
     assert " flac " in out("-encoders")
     assert "channelsplit" in out("-filters")
     assert "ignore_length" in out("-h", "demuxer=wav")
+
+
+def run(name, stdin_text, capsys, monkeypatch):
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin_text))
+    code = setup.main([name])
+    return code, events(capsys)[-1]
+
+
+def test_set_model_writes_config(appdir, capsys, monkeypatch):
+    code, ev = run("set-model", "claude-sonnet-5-5\n", capsys, monkeypatch)
+    assert code == 0 and ev == {"event": "ok", "model": "claude-sonnet-5-5"}
+    assert "ANTHROPIC_MODEL=claude-sonnet-5-5" in (appdir / "config.env").read_text()
+    setup.main(["status"])
+    assert events(capsys)[-1]["summary_model"] == "claude-sonnet-5-5"
+
+
+def test_set_model_rejects_unknown(appdir, capsys, monkeypatch):
+    code, ev = run("set-model", "gpt-5\n", capsys, monkeypatch)
+    assert code == 1 and ev["code"] == "bad_model"
+    assert not (appdir / "config.env").exists()
+
+
+def test_set_instructions_keeps_multiline_text(appdir, capsys, monkeypatch):
+    text = "Первая строка.\n\nВторая строка."
+    code, ev = run("set-instructions", text + "\n", capsys, monkeypatch)
+    assert code == 0 and ev == {"event": "ok", "custom": True}
+    assert summarizer.custom_instructions() == text
+    setup.main(["status"])
+    assert events(capsys)[-1]["summary_custom"] is True
+
+
+def test_set_instructions_default_or_blank_removes_file(appdir, capsys, monkeypatch):
+    run("set-instructions", "Своя.\n", capsys, monkeypatch)
+    code, ev = run("set-instructions", summarizer.DEFAULT_INSTRUCTIONS + "\n", capsys, monkeypatch)
+    assert ev == {"event": "ok", "custom": False}
+    assert not summarizer.instructions_path().exists()
+    run("set-instructions", "Своя.\n", capsys, monkeypatch)
+    code, ev = run("set-instructions", "  \n", capsys, monkeypatch)
+    assert ev == {"event": "ok", "custom": False}
+    assert not summarizer.instructions_path().exists()
+
+
+def test_set_instructions_too_long(appdir, capsys, monkeypatch):
+    code, ev = run("set-instructions", "я" * (setup.MAX_INSTRUCTIONS + 1), capsys, monkeypatch)
+    assert code == 1 and ev["code"] == "too_long"
+    assert not summarizer.instructions_path().exists()
+
+
+def test_summary_settings(appdir, capsys, monkeypatch):
+    run("set-instructions", "Своя.\n", capsys, monkeypatch)
+    setup.main(["summary-settings"])
+    ev = events(capsys)[-1]
+    assert ev["model"] == "claude-opus-5-5"
+    assert ev["instructions"] == "Своя." and ev["custom"] is True
+    assert ev["default_instructions"] == summarizer.DEFAULT_INSTRUCTIONS

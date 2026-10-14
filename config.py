@@ -69,7 +69,8 @@ def _bool(name: str, default: bool = False) -> bool:
 
 
 # ─── LLM / суммаризация ─────────────────────────────────────────────────────
-# Саммари всегда делает Claude Opus. Способ вызова — SUMMARY_BACKEND:
+# Саммари делает Claude (модель — ANTHROPIC_MODEL, выбирается в «Настройке…»).
+# Способ вызова — SUMMARY_BACKEND:
 #   claude_cli — `claude -p` по Max-подписке, API-ключ не нужен (по умолчанию)
 #   api        — Anthropic API по ANTHROPIC_API_KEY, отдельный биллинг
 SUMMARY_BACKEND = os.getenv("SUMMARY_BACKEND", "claude_cli").strip().lower()
@@ -81,7 +82,8 @@ CLAUDE_CODE_MODEL = os.getenv("CLAUDE_CODE_MODEL", "opus")
 
 # ── api ──
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL)
 
 # ─── Транскрипция ───────────────────────────────────────────────────────────
 # tiny / base / small / medium / large / large-v3 / turbo
