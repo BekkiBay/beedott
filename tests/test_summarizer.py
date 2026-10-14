@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from daemon import summarizer
 from daemon.summarizer import (
     FOLLOWUP_KEYS,
     FOLLOWUP_SCHEMA,
@@ -148,3 +149,40 @@ def test_build_prompt_gives_meeting_date_for_relative_deadlines():
     prompt = build_prompt("т", {"title": "Синк", "date": date(2026, 10, 12)})
     assert "пн, 12.10.2026" in prompt
     assert "Дата встречи" not in build_prompt("т", {"title": "Синк"})
+
+
+def test_default_instructions_cover_all_sections():
+    for key in ("context", "discussed", "decisions", "action_items", "open_questions"):
+        assert key in summarizer.DEFAULT_INSTRUCTIONS
+
+
+def test_load_instructions_default_without_file():
+    assert summarizer.load_instructions() == summarizer.DEFAULT_INSTRUCTIONS
+    assert summarizer.custom_instructions() is None
+
+
+def test_load_instructions_blank_file_means_default():
+    summarizer.instructions_path().write_text("  \n\n", encoding="utf-8")
+    assert summarizer.load_instructions() == summarizer.DEFAULT_INSTRUCTIONS
+    assert summarizer.custom_instructions() is None
+
+
+def test_load_instructions_custom_file():
+    summarizer.instructions_path().write_text("Пиши капслоком.\n", encoding="utf-8")
+    assert summarizer.load_instructions() == "Пиши капслоком."
+    assert summarizer.custom_instructions() == "Пиши капслоком."
+
+
+def test_load_instructions_unreadable_file_means_default():
+    summarizer.instructions_path().write_bytes(b"\xff\xfe\x00bad")
+    assert summarizer.load_instructions() == summarizer.DEFAULT_INSTRUCTIONS
+
+
+def test_build_prompt_order_transcript_instructions_format():
+    summarizer.instructions_path().write_text("Пиши капслоком.", encoding="utf-8")
+    prompt = build_prompt("Спикер 1: катим в пятницу", {"title": "Синк"})
+    t = prompt.index("Спикер 1: катим в пятницу")
+    i = prompt.index("Пиши капслоком.")
+    f = prompt.index(summarizer._FORMAT_RULES)
+    assert t < i < f
+    assert summarizer.DEFAULT_INSTRUCTIONS not in prompt

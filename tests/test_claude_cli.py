@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 import pytest
 
-from daemon import claude_cli
-from daemon.summarizer import SummaryAuthError
+from daemon import claude_cli, summarizer
+from daemon.summarizer import SYSTEM_PROMPT, SummaryAuthError
 from tests.conftest import GOOD_FOLLOWUP as GOOD
 
 META = {"title": "Тест", "duration_min": 10, "attendees": ["Аня"]}
@@ -46,6 +46,7 @@ def test_strips_markdown_fence():
 
 
 def test_prompt_goes_to_stdin_with_print_flags():
+    summarizer.instructions_path().write_text("Пиши капслоком.", encoding="utf-8")
     captured = {}
 
     def fake_run(cmd, **kwargs):
@@ -62,13 +63,14 @@ def test_prompt_goes_to_stdin_with_print_flags():
     assert cmd[0] == "/bin/claude"
     assert "--print" in cmd
     assert cmd[cmd.index("--model") + 1] == "opus"
-    assert "--append-system-prompt" in cmd
+    assert cmd[cmd.index("--append-system-prompt") + 1] == SYSTEM_PROMPT
     assert "--bare" not in cmd  # --bare не читает CLAUDE_CODE_OAUTH_TOKEN
     # без плагинов/хуков/CLAUDE.md пользователя (иначе, например, caveman-хук
     # перепишет стиль фоллоу-апа) и без мусора в истории сессий его аккаунта
     assert "--safe-mode" in cmd
     assert "--no-session-persistence" in cmd
     assert TRANSCRIPT in captured["input"]
+    assert "Пиши капслоком." in captured["input"]  # своя инструкция — в промпте
     assert "Аня" in captured["input"]  # участники из календаря
     # API-ключ не должен утечь в CLI — иначе тихий биллинг API вместо подписки
     assert "ANTHROPIC_API_KEY" not in captured["env"]

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import config
-from daemon import anthropic_api
+from daemon import anthropic_api, summarizer
 from daemon.orchestrator import PermanentStageError
 from daemon.summarizer import FOLLOWUP_SCHEMA, SYSTEM_PROMPT, SummaryAuthError
 from tests.conftest import GOOD_FOLLOWUP as GOOD
@@ -140,3 +140,11 @@ def test_text_before_fallback_block_is_dropped(fake_sdk):
         _text(json.dumps(GOOD, ensure_ascii=False)),
     ])
     assert anthropic_api.summarize(TRANSCRIPT, META) == GOOD
+
+
+def test_custom_instructions_go_to_user_message(fake_sdk):
+    summarizer.instructions_path().write_text("Пиши капслоком.", encoding="utf-8")
+    anthropic_api.summarize(TRANSCRIPT, META)
+    req = fake_sdk.requests[0]
+    assert req["system"] == SYSTEM_PROMPT
+    assert "Пиши капслоком." in req["messages"][0]["content"]
