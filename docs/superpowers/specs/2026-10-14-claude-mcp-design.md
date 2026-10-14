@@ -29,12 +29,15 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
   перезапускает Claude Desktop с подтверждения. Файл-расширение `.mcpb` и
   удалённый коннектор отклонены.
 - **Claude Code — по возможности.** Если найден `claude` CLI, сервер
-  регистрируется и там (`claude mcp add --scope user`). Это пишет в
+  регистрируется и там (`claude mcp add-json --scope user`). Это пишет в
   стандартный конфиг Claude Code; при нестандартном `CLAUDE_CONFIG_DIR`
   регистрацию придётся повторить руками — в мастере это не решаем.
-- **SDK.** Официальный Python-пакет `mcp` (FastMCP), транспорт stdio. Новая
-  прямая зависимость в `pyproject.toml`; у коллег рантайм обновится сам при
-  запуске новой версии (сравнение хэша `uv.lock` уже есть).
+- **SDK.** Официальный Python-пакет `mcp`, зависимость `mcp>=2.3,<3`. API
+  2.x: `MCPServer` из `mcp.server.mcpserver` (FastMCP из 1.x там переименован),
+  `@server.tool(annotations=ToolAnnotations(read_only_hint=True))`,
+  `server.run("stdio")`; клиент для тестов — `mcp.client.stdio.stdio_client` +
+  `ClientSession`. У коллег рантайм обновится сам при запуске новой версии
+  (сравнение хэша `uv.lock` уже есть).
 
 ## Python: MCP-сервер `daemon/mcp_server.py`
 
@@ -46,12 +49,13 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
 процесс с произвольным cwd (часто `/`), а `import config` делает
 `mkdir("sessions")` относительно cwd. Это закрепляется тестом.
 
-**Инструменты** (все с аннотацией `readOnlyHint=True`, ответ — Markdown-текст):
+**Инструменты** (все с аннотацией `read_only_hint=True`, ответ — Markdown-текст;
+`limit` и `days` вне диапазона прижимаются к границе, не ошибка):
 
 | Инструмент | Параметры | Что возвращает |
 |---|---|---|
 | `list_meetings` | `limit: int = 20` (1…100) | Последние встречи, новые сверху: id, название, дата и время (локальное), длительность, статус («готово» / «обрабатывается» / «ошибка»), число задач |
-| `search_meetings` | `query: str`, `limit: int = 10` (1…50) | Встречи с совпадениями в саммари или транскрипте, сгруппированные по встрече: id, название, дата, где нашлось, фрагмент. Даты — из одного вызова `sessions_list` |
+| `search_meetings` | `query: str`, `limit: int = 10` (1…50) | Встречи с совпадениями в саммари или транскрипте, сгруппированные по встрече: id, название, дата, где нашлось, фрагмент. Даты — из одного вызова `sessions_list(limit=10000)`; встречи нет в списке — «дата неизвестна» |
 | `get_meeting` | `meeting_id: str`, `include_transcript: bool = False` | Название, дата, длительность, участники (если есть); фоллоу-ап: контекст, что обсуждали, решения, задачи (кто / что / срок), открытые вопросы. С флагом — транскрипт строками `[мм:сс] Спикер N: текст` |
 | `action_items` | `days: int = 7` (1…90) | Задачи из встреч за последние N дней: задача, ответственный, срок, встреча (название, дата, id). Встречи без фоллоу-апа пропускаются |
 
@@ -59,10 +63,12 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
 
 - Данные: `sessions_list`, `session_detail`, `search` — существующие методы
   демона (`daemon/app.py`). `action_items` — один `sessions_list` и
-  `session_detail` для каждой встречи в окне.
+  `session_detail` только для встреч в окне, у которых счётчик `action_items`
+  из списка больше нуля (`session_detail` каждый раз тащит весь транскрипт).
 - Даты в сессиях — ISO UTC; в ответах — локальное время `ДД.ММ.ГГГГ ЧЧ:ММ`.
-- Транскрипт длиннее 200 000 символов обрезается с явной пометкой в конце
-  («показано N из M минут»).
+- Транскрипт длиннее 80 000 символов обрезается с явной пометкой в конце
+  («показано N из M минут»). Предел — под лимит вывода MCP в Claude Code
+  (~25 тыс. токенов); часовая встреча — около 54 000 символов.
 - Встреча без фоллоу-апа (ещё обрабатывается или упала) в `get_meeting` —
   статус и, если есть, транскрипт по флагу.
 - Форматирование — чистые функции (`format_meeting_list`, `format_meeting`,
@@ -71,15 +77,27 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
   пользователя, записанные BeeDott, и что `meeting_id` берётся из
   `list_meetings` / `search_meetings`.
 
-**Ошибки.** Демон не отвечает (нет сокета, отказ соединения) — инструмент
-возвращает текст «BeeDott не запущен — открой приложение BeeDott и повтори
-вопрос», без трейсбэка. Ошибка демона (`not_found` и прочие) — «BeeDott:
-<сообщение>». Неверный `meeting_id` — «Встреча <id> не найдена».
+**Ошибки.** Сейчас `control.request()` на любую беду бросает голый
+`RuntimeError`, а тайм-аут и прочие `OSError` пропускает как есть. В
+`daemon/control.py` появляются два подкласса `RuntimeError` (тексты сообщений
+прежние — `daemon/cli.py` и `tests/test_control.py` ловят `RuntimeError` и
+сверяют текст):
+
+- `DaemonUnavailable` — нет сокета, отказ соединения, тайм-аут, другой
+  `OSError` при соединении или чтении, демон закрыл соединение без ответа;
+- `DaemonError` с полем `code` — демон ответил ошибкой.
+
+MCP-сервер отображает: `DaemonUnavailable` → «BeeDott не запущен или не
+отвечает — открой приложение BeeDott и повтори вопрос»; `DaemonError` с
+`code == "not_found"` → «Встреча <id> не найдена»; прочие `DaemonError` →
+«BeeDott: <сообщение>». Трейсбэков в ответах нет.
 
 ## Python: подключение в `daemon/setup.py`
 
-Две новые команды и одно новое поле в `status`. Протокол прежний: JSON-строки
-в stdout, `ok` / `error`, код выхода 0 / 1.
+Четыре новые команды и одно новое поле в `status`. Протокол прежний:
+JSON-строки в stdout, `ok` / `error`, код выхода 0 / 1. Claude Desktop и
+Claude Code — разные команды: конфиг Claude Desktop пишется за доли секунды,
+и Claude можно открыть снова, не дожидаясь медленного `claude` CLI.
 
 **Команда запуска сервера** считается из процесса, в котором выполняется
 `daemon.setup`:
@@ -91,25 +109,38 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
   (`Path(daemon.__file__).resolve().parent.parent`: у коллег
   `BeeDott.app/Contents/Resources/backend`, у автора — репозиторий); плюс
   `PYTHONPYCACHEPREFIX` и `MEETMIND_APPDIR`, если они заданы в окружении
-  `daemon.setup`. `PYTHONPYCACHEPREFIX` обязателен у коллег: иначе Python
-  напишет `__pycache__` внутрь `.app` и сломает подпись.
+  процесса (их ставит приложение, в `config.env` их нет).
+  `PYTHONPYCACHEPREFIX` обязателен у коллег: иначе Python напишет
+  `__pycache__` внутрь `.app` и сломает подпись.
+
+`status` и команды подключения считают эту команду одной функцией, поэтому
+всегда сравнивают одно и то же.
 
 **Путь к конфигу:** `~/Library/Application Support/Claude/claude_desktop_config.json`,
-переопределяется env `MEETMIND_CLAUDE_DESKTOP_CONFIG` (тесты).
+переопределяется env `MEETMIND_CLAUDE_DESKTOP_CONFIG` (тесты). Чтение: пустой
+файл (0 байт) — как `{}`; не JSON-объект или `mcpServers` не объект —
+`bad_config`. Запись: копия в `claude_desktop_config.json.beedott.bak`, затем
+временный файл в том же каталоге + `os.replace`; если конфиг — симлинк,
+пишем в файл, на который он указывает (`Path.resolve()`), симлинк остаётся.
 
 | Команда | Что делает | `ok` |
 |---|---|---|
-| `claude-connect` | Пишет `mcpServers.beedott` = команда запуска. Остальные ключи файла (`preferences`, чужие серверы и всё прочее) сохраняются как есть. Нет файла или каталога — создаёт. Перед записью копия в `claude_desktop_config.json.beedott.bak`; запись атомарная (временный файл в том же каталоге + `os.replace`). Если найден `claude` CLI — `claude mcp remove --scope user beedott` (ошибку игнорируем) и `claude mcp add --scope user beedott` с той же командой и env; таймаут 30 с, неудача не фатальна | `{"config": путь, "claude_code": "added" \| "failed" \| "absent"}` |
-| `claude-disconnect` | Убирает `mcpServers.beedott` (та же копия и атомарная запись; файла нет или ключа нет — успех без записи). Если найден CLI — `claude mcp remove --scope user beedott` | `{"config": путь}` |
+| `claude-connect` | Пишет `mcpServers.beedott` = команда запуска. Остальные ключи файла (`preferences`, чужие серверы и всё прочее) сохраняются как есть. Нет файла или каталога — создаёт | `{"config": путь}` |
+| `claude-disconnect` | Убирает `mcpServers.beedott`. Файла или ключа нет — успех без записи | `{"config": путь}` |
+| `claude-code-connect` | Если найден `claude` CLI: `claude mcp remove --scope user beedott` (ошибку игнорируем), затем `claude mcp add-json --scope user beedott '<json>'` с той же командой и env, что у Claude Desktop. Таймаут 30 с на вызов. CLI ищется так же, как в `status` (`claude_auth.claude_bin()` после загрузки `config.env`, чтобы учитывался `MEETMIND_CLAUDE_BIN`) | `{"claude_code": "added" \| "failed" \| "absent"}` |
+| `claude-code-disconnect` | Если найден CLI — `claude mcp remove --scope user beedott` | `{"claude_code": "removed" \| "failed" \| "absent"}` |
+
+`claude-code-*` не завершаются ошибкой из-за CLI: неудача — `"failed"` в `ok`.
 
 `status` получает поле `"claude"`: `"connected"` — ключ есть и совпадает с
 текущей командой запуска; `"stale"` — ключ есть, но команда другая
-(переставили приложение, сменился режим dev/bundled); `null` — ключа нет или
-файла нет. Битый конфиг в `status` — `null`, без ошибки.
+(переставили приложение, сменился режим dev/bundled); `"bad_config"` — файл
+повреждён (подключение сразу покажет ошибку, не закрывая Claude); `null` —
+ключа или файла нет. Регистрацию в Claude Code `status` не проверяет
+(запуск `claude` CLI на каждый `status` — секунды).
 
-Ошибки: `bad_config` — файл есть, но это не JSON-объект или `mcpServers` не
-объект; файл не трогаем, сообщение с путём. `internal` — прочее (нет прав на
-запись и т. п.).
+Ошибки команд: `bad_config` — файл повреждён, не трогаем, сообщение с путём;
+`internal` — прочее (нет прав на запись и т. п.).
 
 ## Swift: шаг мастера «Claude»
 
@@ -122,6 +153,9 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
 (`NSWorkspace.urlForApplication(withBundleIdentifier:)`), запущен ли —
 `NSRunningApplication.runningApplications(withBundleIdentifier:)`.
 
+При входе на шаг мастер заново спрашивает `status` (на чистом Mac мастер
+открылся до установки рантайма, `status` тогда ещё не было).
+
 Состояния шага:
 
 1. **Claude Desktop не установлен.** Текст «Подключи BeeDott к Claude
@@ -133,7 +167,11 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
    «Подключить» (для `stale` — «Переподключить»).
 3. **Подключён (`"connected"`).** «Claude подключён ✓», подсказка «Открой
    Claude и спроси: что решили на последней встрече?», ссылка «Отключить».
-   Если найден Claude Code и регистрация прошла — строка «И в Claude Code».
+   Сразу после подключения, если `claude-code-connect` вернул `added`, —
+   строка «И в Claude Code» (при следующем открытии мастера её нет:
+   `status` Claude Code не проверяет).
+4. **Конфиг повреждён (`"bad_config"`).** Текст ошибки (см. ниже), кнопки
+   «Подключить» нет, «Проверить снова».
 
 **Порядок подключения и отключения** (одна функция для обоих):
 
@@ -144,9 +182,11 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
    убиваем.
 3. `runSetup("claude-connect")` (или `claude-disconnect`), строка состояния —
    `PhaseRow` как в других шагах.
-4. Если Claude был запущен до шага 1 — открыть его снова
+4. Если Claude был запущен до шага 1 — сразу открыть его снова
    (`NSWorkspace.openApplication`). Если не был — кнопка «Открыть Claude».
-5. Перечитать `status`.
+5. `runSetup("claude-code-connect")` (или `claude-code-disconnect`) — уже при
+   открытом Claude, результат только для строки «И в Claude Code».
+6. Перечитать `status`.
 
 Конфиг пишется только при закрытом Claude Desktop: он держит файл в памяти
 (`preferences` там же) и при выходе может перезаписать его старой версией.
@@ -181,16 +221,26 @@ BeeDott; твои прочие MCP-серверы и настройки Claude D
   `python -m daemon.mcp_server` подпроцессом, MCP-клиент из пакета `mcp`
   (stdio): `initialize`, `list_tools` — четыре инструмента, `call_tool
   search_meetings` — данные из фейка.
-- **pytest `tests/test_setup.py`:** `claude-connect` создаёт файл с нуля;
-  дописывает к существующему, сохраняя `preferences` и чужие серверы;
-  повторный вызов идемпотентен; делает `.bak`; битый JSON → `bad_config`,
-  файл не изменён; `claude-disconnect` убирает только свой ключ; `status.claude`
-  — `connected` / `stale` / `null`; env с `PYTHONPYCACHEPREFIX`; Claude Code —
-  фейковый `claude`-скрипт пишет argv в файл: проверяем `remove` + `add` с
-  нужными аргументами; CLI нет → `absent`.
+- **pytest `tests/test_control.py`:** нет сокета → `DaemonUnavailable`;
+  ответ с ошибкой → `DaemonError` с `code`; оба — `RuntimeError` с прежним
+  текстом.
+- **pytest `tests/test_setup.py`:** фикстура `appdir` ставит
+  `MEETMIND_CLAUDE_DESKTOP_CONFIG` во временный каталог (иначе тесты читают
+  настоящий конфиг Claude) и, как сейчас, глушит `claude_auth.claude_bin`;
+  `test_status_clean_mac` ждёт новое поле `claude: null`. `claude-connect`
+  создаёт файл с нуля; дописывает к существующему, сохраняя `preferences` и
+  чужие серверы; повторный вызов идемпотентен; делает `.bak`; пустой файл —
+  как `{}`; симлинк остаётся симлинком; битый JSON → `bad_config`, файл не
+  изменён; `claude-disconnect` убирает только свой ключ; `status.claude` —
+  `connected` / `stale` / `bad_config` / `null`; env с `PYTHONPYCACHEPREFIX`;
+  `claude-code-*` — фейковый `claude`-скрипт пишет argv в файл: `remove` +
+  `add-json` с той же командой и env; CLI нет → `absent`; CLI с ненулевым
+  кодом → `failed`.
 - **Вручную:** на Mac автора (dev-режим) пройти шаг через «Настройку…»,
   убедиться, что confluence/clickhouse/trino на месте, спросить Claude про
-  последнюю встречу.
+  последнюю встречу. Проверить, что `terminate()` закрывает Claude без запроса
+  разрешения на автоматизацию (если запрос есть — сработает запасной путь
+  «Закрой Claude вручную»).
 
 ## Вне рамок
 
