@@ -237,7 +237,7 @@ def search_notes(con, query: str, *, limit: int = 50) -> list[dict]:
         rows = con.execute(
             f"SELECT session_id, title,"
             f" snippet(notes_fts, {col_idx}, '[[', ']]', '…', 12) AS snip"
-            f" FROM notes_fts WHERE notes_fts MATCH ? LIMIT ?",
+            f" FROM notes_fts WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?",
             (f"{'transcript' if source == 'transcript' else 'summary'}: {match}",
              limit)).fetchall()
         results.extend(

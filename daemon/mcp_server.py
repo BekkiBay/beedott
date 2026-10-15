@@ -33,35 +33,50 @@ def _minutes(value) -> str:
     return f"{round(value)} мин" if value is not None else "длительность неизвестна"
 
 
+def _trim_error(text: str) -> str:
+    """Первая строка сообщения об ошибке, не длиннее 200 символов — простыня
+    трейсбека не должна разворачиваться в списке встреч или карточке."""
+    return text.splitlines()[0][:200] if text else ""
+
+
 def format_meeting_list(sessions: list[dict]) -> str:
     if not sessions:
         return "Встреч пока нет."
     lines = []
     for s in sessions:
         tasks = f", задач: {s['action_items']}" if s.get("action_items") else ""
+        status = _STATUS.get(s['status'], s['status'])
+        if s.get("status") == "error" and s.get("error"):
+            status += f": {_trim_error(s['error'])}"
         lines.append(f"- **{s['display_title']}** — {_when(s['started_at'])}, "
                      f"{_minutes(s.get('duration_min'))}, "
-                     f"{_STATUS.get(s['status'], s['status'])}{tasks} · id `{s['id']}`")
+                     f"{status}{tasks} · id `{s['id']}`")
     return "\n".join(lines)
 
 
 def format_search(query: str, results: list[dict], sessions: list[dict], limit: int) -> str:
-    """Попадания демона (по строке на источник) → группы по встречам. Даты —
-    из sessions_list; встречи нет в списке — «дата неизвестна»."""
+    """Попадания демона (по строке на источник) → группы по встречам, в
+    порядке sessions_list (новые сначала); встречи не из списка — в конец.
+    Усечение по limit — c подсказкой, сколько встреч скрыто."""
+    order = {s["id"]: i for i, s in enumerate(sessions)}
     by_id = {s["id"]: s for s in sessions}
     groups: dict[str, list[dict]] = {}
     for hit in results:
         groups.setdefault(hit["session_id"], []).append(hit)
     if not groups:
         return f"По запросу «{query}» ничего не нашлось."
+    ordered = sorted(groups.items(), key=lambda kv: order.get(kv[0], len(sessions)))
+    total = len(ordered)
     lines = []
-    for sid, hits in list(groups.items())[:limit]:
+    for sid, hits in ordered[:limit]:
         s = by_id.get(sid)
         title = s["display_title"] if s else (hits[0].get("title") or "Без названия")
         lines.append(f"### {title} — {_when(s['started_at'] if s else None)} · id `{sid}`")
         for hit in hits:
             snippet = hit["snippet"].replace("[[", "**").replace("]]", "**")
             lines.append(f"- {_SOURCE.get(hit['source'], hit['source'])}: {snippet}")
+    if total > limit:
+        lines.append(f"(показаны {limit} из {total} встреч — уточни запрос или увеличь limit)")
     return "\n".join(lines)
 
 
@@ -89,7 +104,7 @@ def _state_text(detail: dict) -> str:
         return "готово"
     if state == "FAILED":
         errors = [p["error"] for p in detail.get("pipeline") or [] if p.get("ok") is False]
-        return "ошибка" + (f": {errors[0]}" if errors else "")
+        return "ошибка" + (f": {_trim_error(errors[0])}" if errors else "")
     if state in ("DETECTED", "RECORDING"):
         return "идёт запись"
     return "обрабатывается"
@@ -97,6 +112,11 @@ def _state_text(detail: dict) -> str:
 
 def _bullets(items: list[str]) -> list[str]:
     return [f"- {x}" for x in items] or ["нет"]
+
+
+def _task_line(t: dict) -> str:
+    deadline = f", срок: {t['deadline']}" if t.get("deadline") else ""
+    return f"- {t['task']} — {t['owner']}{deadline}"
 
 
 def format_followup(followup: dict) -> list[str]:
@@ -108,21 +128,22 @@ def format_followup(followup: dict) -> list[str]:
              "### Решения", *_bullets(followup.get("decisions") or []),
              "### Задачи"]
     tasks = followup.get("action_items") or []
-    for t in tasks:
-        deadline = f", срок: {t['deadline']}" if t.get("deadline") else ""
-        lines.append(f"- {t['task']} — {t['owner']}{deadline}")
-    if not tasks:
-        lines.append("нет")
+    lines += [_task_line(t) for t in tasks] if tasks else ["нет"]
     lines += ["### Открытые вопросы", *_bullets(followup.get("open_questions") or [])]
     return lines
 
 
-def format_transcript(segments: list[dict], from_minute: int = 0) -> str:
+def format_transcript(segments: list[dict], from_minute: int = 0,
+                       meeting_id: str = "meeting_id") -> str:
     """Строки `[мм:сс] Спикер N: текст` с минуты from_minute. Длиннее
-    TRANSCRIPT_LIMIT — обрезка по строке и подсказка, с какой минуты дальше."""
+    TRANSCRIPT_LIMIT — обрезка по строке и подсказка, с какой минуты дальше.
+    meeting_id — для подсказки-продолжения: format_meeting передаёт реальный
+    id, прямой вызов без него получает плейсхолдер."""
     if not segments:
         return "Расшифровки нет."
-    total = math.ceil(segments[-1]["end"] / 60)
+    # Сегменты сортированы по start (стерео-дорожки двух спикеров), у
+    # последнего по порядку конец не обязательно самый поздний.
+    total = math.ceil(max(seg["end"] for seg in segments) / 60)
     start = from_minute * 60
     lines: list[str] = []
     size = 0
@@ -145,7 +166,7 @@ def format_transcript(segments: list[dict], from_minute: int = 0) -> str:
         return f"С {from_minute}-й минуты расшифровки нет — всего {total} мин."
     if next_minute is not None:
         lines.append(f"(Показано с {from_minute} по {next_minute} минуту из {total}; "
-                     f"продолжение — get_meeting(meeting_id, include_transcript=true, "
+                     f"продолжение — get_meeting(\"{meeting_id}\", include_transcript=true, "
                      f"from_minute={next_minute}).)")
     return "\n".join(lines)
 
@@ -169,7 +190,8 @@ def format_meeting(detail: dict, *, include_transcript: bool = False,
     lines += format_followup(followup) if followup else ["Фоллоу-апа пока нет."]
     if include_transcript:
         lines += ["", "## Расшифровка",
-                  format_transcript(detail.get("transcript") or [], from_minute)]
+                  format_transcript(detail.get("transcript") or [], from_minute,
+                                     meeting_id=s["id"])]
     return "\n".join(lines)
 
 
@@ -180,9 +202,7 @@ def format_action_items(rows: list[tuple[dict, dict]], days: int) -> str:
         if not tasks:
             continue
         out.append(f"### {s['display_title']} — {_when(s['started_at'])} · id `{s['id']}`")
-        for t in tasks:
-            deadline = f", срок: {t['deadline']}" if t.get("deadline") else ""
-            out.append(f"- {t['task']} — {t['owner']}{deadline}")
+        out += [_task_line(t) for t in tasks]
     return "\n".join(out) if out else f"За последние {days} дн. задач нет."
 
 
@@ -195,7 +215,7 @@ def format_status(st: dict, now: datetime | None = None) -> str:
         started = st.get("recording_started_at")
         since = ""
         if started:
-            minutes = round((now - datetime.fromisoformat(started)).total_seconds() / 60)
+            minutes = max(0, round((now - to_local(started)).total_seconds() / 60))
             since = f" с {to_local(started).strftime('%H:%M')} ({minutes} мин)"
         title = st.get("recording_display_title") or "Без названия"
         lines.append(f"Идёт запись **{title}**{since} · id `{st['recording']}`")

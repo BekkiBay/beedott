@@ -61,3 +61,22 @@ def test_migration_survives_concurrent_add_column(tmp_path, monkeypatch):
     con = db.connect()  # колонка уже есть
     monkeypatch.setattr(db, "_session_columns", lambda c: {"id", "state"})
     db._migrate(con)  # «устаревший» снимок колонок → ALTER на существующую колонку
+
+
+def test_search_notes_orders_by_relevance_not_insertion(tmp_path, monkeypatch):
+    """search_notes без ORDER BY возвращал LIMIT строк в порядке rowid (т.е.
+    самые старые по вставке), а не самые релевантные. Слабое совпадение
+    вставлено первым — при limit=1 должна остаться сильная строка (термин
+    повторяется много раз), а не первая по rowid."""
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    weak_sid = db.create_session(con, source="manual", title="слабое")
+    db.index_note(con, weak_sid, title="слабое",
+                  transcript="отчёт один раз мелькнул в начале текста", summary="")
+    strong_sid = db.create_session(con, source="manual", title="сильное")
+    db.index_note(con, strong_sid, title="сильное",
+                  transcript="отчёт отчёт отчёт отчёт отчёт", summary="")
+
+    hits = db.search_notes(con, "отчёт", limit=1)
+    assert len(hits) == 1
+    assert hits[0]["session_id"] == strong_sid

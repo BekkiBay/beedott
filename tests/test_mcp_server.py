@@ -57,6 +57,17 @@ def test_meeting_list_empty():
     assert mcp_server.format_meeting_list([]) == "Встреч пока нет."
 
 
+def test_meeting_list_error_status_appends_trimmed_error():
+    long_line = "о" * 250
+    sessions = [{"id": "e1", "title": None, "display_title": "Сбой",
+                 "started_at": "2026-10-14T05:00:00+00:00", "duration_min": 3,
+                 "status": "error", "action_items": None,
+                 "error": f"{long_line}\nвторая строка traceback"}]
+    out = mcp_server.format_meeting_list(sessions)
+    assert f"ошибка: {long_line[:200]}" in out
+    assert "вторая строка" not in out
+
+
 def test_search_groups_hits_by_meeting():
     results = [
         {"session_id": "aaa111", "title": "Синк", "source": "transcript", "snippet": "про [[отчёт]]"},
@@ -78,6 +89,19 @@ def test_search_limit_and_nothing_found():
         "По запросу «пусто» ничего не нашлось."
 
 
+def test_search_orders_by_recency_and_shows_truncation_hint():
+    """Хиты демона приходят старое-первым (FTS5 без ORDER BY ≈ rowid); формат
+    должен показывать самую новую встречу, а не первую по порядку хитов."""
+    results = [
+        {"session_id": SESSIONS[1]["id"], "title": None, "source": "summary", "snippet": "x"},
+        {"session_id": SESSIONS[0]["id"], "title": None, "source": "summary", "snippet": "x"},
+    ]
+    out = mcp_server.format_search("x", results, SESSIONS, limit=1)
+    assert "id `aaa111`" in out
+    assert "bbb222" not in out
+    assert "(показаны 1 из 2 встреч — уточни запрос или увеличь limit)" in out
+
+
 def test_meeting_card_with_followup():
     out = mcp_server.format_meeting(detail())
     assert out.startswith("# Синк\n14.10.2026 10:00 · 42 мин · готово · id `aaa111`")
@@ -96,6 +120,16 @@ def test_meeting_card_without_followup_and_failed_state():
     assert "ошибка: summarize: 529" in out
     assert "Аудио: нет" in out
     assert "Фоллоу-апа пока нет." in out
+
+
+def test_meeting_card_failed_state_trims_long_pipeline_error():
+    long_text = "summarize: " + "б" * 250
+    d = detail(session={"state": "FAILED"},
+               pipeline=[{"step": "summarized", "ok": False,
+                          "error": f"{long_text}\nTraceback (most recent call last)"}])
+    out = mcp_server.format_meeting(d)
+    assert f"ошибка: {long_text[:200]}" in out
+    assert "Traceback" not in out
 
 
 def test_meeting_card_with_transcript():
@@ -126,6 +160,70 @@ def test_long_transcript_comes_in_pages(monkeypatch):
     assert second.startswith(f"[{next_minute:02d}:")
 
 
+def test_transcript_total_minutes_uses_max_end_not_last_segment():
+    """Сегменты сортированы по start (как у транскрайбера со стерео-дорожками
+    двух спикеров) — у последнего по порядку сегмента end может быть не самым
+    большим."""
+    segments = [
+        {"start": 0.0, "end": 600.0, "text": "длинная реплика", "speaker": "Спикер 1"},
+        {"start": 5.0, "end": 20.0, "text": "короткая реплика", "speaker": "Спикер 2"},
+    ]
+    out = mcp_server.format_transcript(segments, from_minute=20)
+    assert out == "С 20-й минуты расшифровки нет — всего 10 мин."
+
+
+def test_transcript_continuation_hint_has_real_meeting_id(monkeypatch):
+    monkeypatch.setattr(mcp_server, "TRANSCRIPT_LIMIT", 40)
+    out = mcp_server.format_transcript(SEGMENTS, meeting_id="aaa111")
+    assert 'get_meeting("aaa111", include_transcript=true, from_minute=1).)' in out
+
+
+def test_meeting_card_transcript_hint_has_real_meeting_id(monkeypatch):
+    monkeypatch.setattr(mcp_server, "TRANSCRIPT_LIMIT", 40)
+    out = mcp_server.format_meeting(detail(), include_transcript=True)
+    assert 'get_meeting("aaa111", include_transcript=true, from_minute=1).)' in out
+
+
+def test_transcript_paging_covers_every_line_with_overlapping_speakers(monkeypatch):
+    """Два спикера перекрываются по времени внутри каждой минуты, сегменты
+    отсортированы по start (как у транскрайбера). Пройти по подсказкам
+    from_minute до конца и убедиться, что ни одна непустая реплика не
+    потерялась и страниц конечное число."""
+    monkeypatch.setattr(mcp_server, "TRANSCRIPT_LIMIT", 116)
+    raw = []
+    for m in range(10):
+        raw.append({"start": m * 60 + 5.0, "end": m * 60 + 10.0,
+                    "text": f"А линия {m:02d}", "speaker": "Спикер 1"})
+        raw.append({"start": m * 60 + 7.0, "end": m * 60 + 15.0,
+                    "text": f"Б линия {m:02d}", "speaker": "Спикер 2"})
+    segments = sorted(raw, key=lambda s: s["start"])
+
+    def expected_line(seg):
+        mm, ss = divmod(int(seg["start"]), 60)
+        return f"[{mm:02d}:{ss:02d}] {seg['speaker']}: {seg['text']}"
+
+    expected = {expected_line(seg) for seg in segments if seg["text"].strip()}
+
+    seen: set[str] = set()
+    from_minute = 0
+    pages = 0
+    while True:
+        pages += 1
+        assert pages <= 50, "страницы не заканчиваются"
+        page = mcp_server.format_transcript(segments, from_minute=from_minute,
+                                             meeting_id="mmm111")
+        lines = page.splitlines()
+        hint = lines[-1] if lines and lines[-1].startswith("(Показано") else None
+        body = lines[:-1] if hint else lines
+        seen.update(body)
+        if hint is None:
+            break
+        from_minute = int(hint.split("from_minute=")[1].rstrip(").)"))
+
+    assert expected <= seen
+    assert pages < 50
+
+
 def test_action_items_and_status_formatting():
     rows = [(SESSIONS[0], dict(GOOD, action_items=[
         {"task": "Собрать отчёт", "owner": "Стас", "deadline": "2026-10-16"},
@@ -148,3 +246,14 @@ def test_action_items_and_status_formatting():
     assert "Встреч с ошибкой: 2" in out
     assert mcp_server.format_status({"recording": None, "queue": [], "sessions": {}}) == \
         "Запись не идёт.\nОчередь обработки пуста."
+
+
+def test_status_recording_clock_drift_clamped_to_zero():
+    """recording_started_at чуть в будущем относительно now (расхождение
+    часов) — минуты не должны уходить в минус."""
+    now = datetime(2026, 10, 15, 6, 0, tzinfo=timezone.utc)
+    st = {"recording": "ccc333", "recording_display_title": "Встреча 10:30",
+          "recording_started_at": "2026-10-15T06:05:00+00:00",
+          "queue": [], "sessions": {}}
+    out = mcp_server.format_status(st, now=now)
+    assert "(0 мин)" in out
