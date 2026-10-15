@@ -85,7 +85,9 @@ class DaemonApp:
         self._guard: AppRecordingGuard | None = None  # предохранители owner=app
         self._stop_request: str | None = None  # причина авто-стопа для Swift
         self._start_request: dict | None = None  # запрос записи от Claude (MCP)
-        self._clock = time.monotonic  # тесты подменяют
+        # time.monotonic останавливается во время сна Mac — флаг start_requested
+        # мог бы считаться не протухшим после пробуждения дольше его TTL.
+        self._clock = time.time  # тесты подменяют
         self._tls = threading.local()  # sqlite-подключение на поток
         # Фоновая работа (импорт аудио); тесты подменяют на синхронный вызов.
         self._run_async = lambda fn, *args: threading.Thread(
@@ -193,6 +195,7 @@ class DaemonApp:
         микрофон, права TCC), не демон: флаг уходит в status, приложение при
         опросе запускает запись как по ⌘⇧R. Флаг живёт START_REQUEST_TTL_SEC."""
         title = (params.get("title") or "").strip()[:200] or None
+        logger.info("Claude (MCP) просит начать запись (title=%r)", title)
         with self._lock:
             if self._active_sid is not None:
                 raise ControlError("busy", "уже идёт запись")
@@ -207,6 +210,8 @@ class DaemonApp:
         with self._lock:
             if self._active_sid is None:
                 raise ControlError("no_active_session", "нет активной записи")
+            logger.info(
+                "Claude (MCP) просит остановить запись %s (owner=%s)", self._active_sid, self._owner)
             if self._owner == "app":
                 if self._stop_request is None:
                     self._stop_request = "mcp"

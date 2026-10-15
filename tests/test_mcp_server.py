@@ -572,6 +572,19 @@ def test_stop_recording_processed(daemon, fast):
     assert "ушла в обработку" in mcp_server.stop_recording()
 
 
+def test_stop_recording_warns_about_new_recording_started_right_after(daemon, fast):
+    # Детектор звонков (браузер ещё говорил) тут же начал новую запись того
+    # же звонка — recording_status становится другим непустым id.
+    daemon.handlers["status"] = statuses({"recording": "ccc333"}, {"recording": "ccc333"},
+                                         {"recording": "ddd444"})
+    daemon.handlers["request_stop"] = {"session_id": "ccc333", "requested": True}
+    daemon.handlers["sessions_list"] = {"sessions": [dict(SESSIONS[0], id="ccc333")]}
+    out = mcp_server.stop_recording()
+    assert "ушла в обработку" in out
+    assert "новая запись (id `ddd444`)" in out
+    assert "recording_status" in out
+
+
 def test_stop_recording_cancelled_empty(daemon, fast):
     daemon.handlers["status"] = statuses({"recording": "ccc333"}, {"recording": None})
     daemon.handlers["request_stop"] = {"session_id": "ccc333", "requested": True}

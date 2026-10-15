@@ -51,9 +51,9 @@ INSTRUCTIONS = (
     "то, о чём просили; resend=true — только если пользователь просил отправить в "
     "Telegram. Удаляй встречу только по явной просьбе, с её точным названием; если "
     "delete_meeting ответит, что название не совпало — переспроси пользователя, не "
-    "повторяй удаление с названием из этой ошибки. Запись: start_recording и "
-    "stop_recording — только по просьбе пользователя; import_audio импортирует "
-    "аудиофайл с этого Mac."
+    "повторяй удаление с названием из этой ошибки. Запись и импорт — только по "
+    "явной просьбе пользователя: start_recording и stop_recording управляют "
+    "записью; import_audio импортирует аудиофайл с этого Mac."
 )
 
 server = MCPServer(name="beedott", instructions=INSTRUCTIONS)
@@ -500,7 +500,11 @@ def stop_recording() -> str:
         raise ToolError("Запись не идёт.")
     _call("request_stop")
     deadline = time.monotonic() + WAIT_SEC
-    while _call("status").get("recording") == sid:
+    status = {}
+    while True:
+        status = _call("status")
+        if status.get("recording") != sid:
+            break
         if time.monotonic() >= deadline:
             raise ToolError("Запись ещё останавливается — проверь recording_status")
         time.sleep(POLL_SEC)
@@ -509,16 +513,25 @@ def stop_recording() -> str:
     # каталог сессии заново (paths.session_dir).
     listed = _call("sessions_list", {"limit": 20})["sessions"]
     if not any(s["id"] == sid for s in listed):
-        return "Запись была пустой или слишком короткой — BeeDott её отменил."
-    return (f"Запись остановлена, встреча ушла в обработку · id `{sid}`. "
-            "Фоллоу-ап будет через несколько минут.")
+        reply = "Запись была пустой или слишком короткой — BeeDott её отменил."
+    else:
+        reply = (f"Запись остановлена, встреча ушла в обработку · id `{sid}`. "
+                "Фоллоу-ап будет через несколько минут.")
+    # Детектор звонков мог тут же начать новую запись того же звонка (на
+    # момент стопа браузер ещё говорил) — предупреждаем, а не молчим.
+    new_sid = status.get("recording")
+    if new_sid and new_sid != sid:
+        reply += (f" Внимание: сразу началась новая запись (id `{new_sid}`) — "
+                 "проверь recording_status.")
+    return reply
 
 
 @server.tool(annotations=EDIT, structured_output=False)
 @tool_errors
 def import_audio(path: str, title: str | None = None) -> str:
     """Импортировать аудиофайл с этого Mac (m4a, mp3, wav…) как встречу: он
-    пройдёт расшифровку и фоллоу-ап. path — полный путь к файлу."""
+    пройдёт расшифровку и фоллоу-ап. Только по явной просьбе пользователя.
+    path — полный путь к файлу."""
     params = {"path": path}
     if title:
         params["title"] = title
