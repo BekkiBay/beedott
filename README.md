@@ -62,7 +62,9 @@ daemon.mcp_server` (stdio), ходит в демон через `control.sock`, 
 `list_meetings`, `search_meetings`, `get_meeting`, `action_items`,
 `recording_status`, `rename_meeting`, `resummarize_meeting`, `update_followup`
 (с `resend` в Telegram), `set_keep_audio`, `delete_meeting` (сверяет
-название). Спек: `docs/superpowers/specs/2026-10-14-claude-mcp-design.md`.
+название), `start_recording` / `stop_recording` (пишет приложение, по флагу в
+`status`), `import_audio`. Спек:
+`docs/superpowers/specs/2026-10-14-claude-mcp-design.md`.
 
 ---
 

@@ -844,10 +844,10 @@ private struct ClaudeStepView: View {
 
     static let exampleRequests = [
         "Что решили на последней встрече?",
-        "Какие задачи на мне за неделю?",
         "В задаче про отчёт исполнитель — Стас, поправь",
+        "Начни запись «Синк по реакциям»",
     ]
-    static let dataNote = "Claude видит встречу, только когда сам её запрашивает; ответы идут в твой аккаунт Claude. Менять встречи Claude будет с твоего разрешения в Claude."
+    static let dataNote = "Claude видит встречу, только когда сам её запрашивает; ответы идут в твой аккаунт Claude. Менять встречи и запускать запись Claude будет с твоего разрешения в Claude."
 
     @ViewBuilder private var codeResult: some View {
         switch model.claudeCodeResult {
