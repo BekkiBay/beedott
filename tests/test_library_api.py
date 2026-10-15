@@ -685,3 +685,42 @@ def test_status_reports_recording_display_title(app):
     st = app.status({})
     assert st["recording_title"] is None
     assert st["recording_display_title"].startswith("Встреча ")
+
+
+# ───── MCP: правка фоллоу-апа и удаление со сверкой названия ──────────────────
+
+
+def test_update_followup_handler(app):
+    from daemon.control import ControlError
+    sid = _mk_session(app._con)
+    with pytest.raises(ControlError) as exc:
+        app.update_followup({"session_id": sid, "followup": {"context": "x"}})
+    assert exc.value.code == "bad_params"
+    r = app.update_followup({"session_id": sid, "followup": dict(GOOD), "resend": False})
+    assert (r["session_id"], r["revision"], r["resend"]) == (sid, 2, False)
+    assert r["telegram"] in ("off", "pending", "unchanged")
+
+
+def test_update_followup_refuses_active_recording(app):
+    from daemon.control import ControlError
+    sid = app.start_recording({"audio_path_owner": "app"})["session_id"]
+    with pytest.raises(ControlError) as exc:
+        app.update_followup({"session_id": sid, "followup": dict(GOOD)})
+    assert exc.value.code == "busy"
+
+
+def test_delete_session_checks_title(app):
+    from daemon.control import ControlError
+    con = app._con
+    sid = _mk_session(con, title="Ретро")
+    with pytest.raises(ControlError) as exc:
+        app.delete_session({"session_id": sid, "title": "Синк"})
+    assert exc.value.code == "bad_params" and "«Ретро»" in str(exc.value)
+    assert db.get_session(con, sid) is not None
+    assert app.delete_session({"session_id": sid, "title": " Ретро "})["deleted"] is True
+
+
+def test_delete_untitled_session_by_display_title(app):
+    sid = _mk_session(app._con, title=None)
+    shown = app.sessions_list({})["sessions"][0]["display_title"]
+    assert app.delete_session({"session_id": sid, "title": shown})["deleted"] is True

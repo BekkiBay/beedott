@@ -425,12 +425,36 @@ class DaemonApp:
         self._con.commit()
         return {"session_id": sid, "title": title}
 
+    def update_followup(self, params: dict) -> dict:
+        """Правка фоллоу-апа из Claude (MCP update_followup): новая ревизия,
+        поиск, повторная доставка заметки (и Telegram при resend) —
+        daemon/followup_edit.py."""
+        sid = params.get("session_id")
+        if not sid:
+            raise ControlError("bad_params", "нужен session_id")
+        with self._lock:
+            if sid == self._active_sid:
+                raise ControlError("busy", "идёт запись этой встречи")
+            try:
+                return followup_edit.apply(self._con, sid, params.get("followup"),
+                                           resend=bool(params.get("resend")))
+            except followup_edit.EditError as exc:
+                raise ControlError(exc.code, str(exc)) from exc
+
     def delete_session(self, params: dict) -> dict:
         """«Удалить встречу» (продукт P14): аудио, транскрипт, саммари, поиск и
-        строки в БД. Заметки в ~/MeetMind и сообщения в Telegram остаются."""
+        строки в БД. Заметки в ~/MeetMind и сообщения в Telegram остаются.
+        title (необязательно) — сверка названия перед удалением (MCP)."""
         sid = params.get("session_id")
-        if not sid or db.get_session(self._con, sid) is None:
+        row = db.get_session(self._con, sid) if sid else None
+        if row is None:
             raise ControlError("not_found", f"нет сессии {sid}")
+        # Claude (MCP) передаёт название, которое видел: страховка от удаления
+        # не той встречи по перепутанному id. Приложение удаляет без title.
+        expected = params.get("title")
+        if expected is not None and expected.strip() != db.session_title(row).strip():
+            raise ControlError("bad_params", f"название не совпадает: встреча {sid} "
+                                             f"называется «{db.session_title(row)}»")
         with self._lock:
             if sid == self._active_sid:
                 raise ControlError("busy", "идёт запись этой встречи — сначала остановите её")
@@ -606,6 +630,7 @@ class DaemonApp:
             "set_keep_audio": self.set_keep_audio,
             "delete_session": self.delete_session,
             "rename_session": self.rename_session,
+            "update_followup": self.update_followup,
             "notifications_pop": self.notifications_pop,
             "import_audio": self.import_audio,
             "health": self.health,
