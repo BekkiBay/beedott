@@ -38,3 +38,11 @@ def _isolated_appdir(tmp_path, monkeypatch):
     прочитает настоящий followup_instructions.md пользователя. Тесты со своей
     фикстурой appdir ставят MEETMIND_APPDIR позже и переопределяют этот."""
     monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path / "isolated-app"))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_claude_desktop_config(tmp_path, monkeypatch):
+    """daemon.setup claude-* и status читают конфиг Claude Desktop — в тестах
+    только временный файл, настоящий конфиг пользователя не трогаем."""
+    monkeypatch.setenv("MEETMIND_CLAUDE_DESKTOP_CONFIG",
+                       str(tmp_path / "claude-desktop" / "claude_desktop_config.json"))

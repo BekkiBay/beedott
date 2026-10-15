@@ -15,6 +15,7 @@ dependencies = [
   "anthropic>=1.13",
   "huggingface_hub>=1.0",
   "imageio-ffmpeg>=0.6",
+  "mcp>=2.3,<3",
 ]
 
 [dependency-groups]
