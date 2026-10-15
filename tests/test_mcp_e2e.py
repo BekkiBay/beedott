@@ -27,10 +27,22 @@ def appdir(monkeypatch):
     def wrong_title(params):
         raise ControlError("bad_params", "название не совпадает: встреча aaa111 называется «Синк»")
 
+    def session_detail(params):
+        # delete_meeting и get_meeting сверяют название через session_detail —
+        # нужен настоящий хендлер, не unknown_method.
+        if params["session_id"] != "aaa111":
+            raise ControlError("not_found", f"нет сессии {params['session_id']}")
+        return {"session": {"id": "aaa111", "title": "Синк", "display_title": "Синк",
+                            "started_at": "2026-10-14T05:00:00+00:00",
+                            "ended_at": "2026-10-14T05:30:00+00:00", "attendees": "[]",
+                            "state": "DELIVERED", "has_audio": False, "keep_audio": 0},
+                "followup": None, "transcript": None, "pipeline": [], "sinks": []}
+
     ControlServer({
         "sessions_list": lambda p: {"sessions": [SESSION]},
         "search": lambda p: {"results": [{"session_id": "aaa111", "title": "Синк",
                                           "source": "summary", "snippet": "про [[отчёт]]"}]},
+        "session_detail": session_detail,
         "delete_session": wrong_title,
     }).start()
     yield d
@@ -71,7 +83,8 @@ def test_client_lists_tools_and_searches(appdir):
     assert not found.is_error
     assert "### Синк — 14.10.2026 10:00" in found.content[0].text
     assert "**отчёт**" in found.content[0].text
-    # у фейкового демона нет session_detail → unknown_method → понятная ошибка
+    # неизвестная встреча → not_found → понятная ошибка
     assert missing.is_error
-    assert "BeeDott: " in missing.content[0].text
+    assert "Встреча не найдена" in missing.content[0].text
+    # delete_meeting сверяет название через session_detail раньше delete_session
     assert wrong.is_error and "называется «Синк»" in wrong.content[0].text

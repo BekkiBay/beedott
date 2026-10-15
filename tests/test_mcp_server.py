@@ -433,6 +433,8 @@ def test_recording_status_tool(daemon):
     (control.DaemonError("not_found", "нет сессии x"), "Встреча не найдена"),
     (control.DaemonError("busy", "встреча сейчас обрабатывается"),
      "BeeDott: встреча сейчас обрабатывается"),
+    (control.DaemonError("unknown_method", "session_detail"),
+     "BeeDott нужно перезапустить"),
     (ValueError("boom"), "BeeDott: ошибка — ValueError: boom"),
 ])
 def test_errors_become_readable_tool_errors(daemon, error, text):
@@ -476,6 +478,7 @@ def test_edit_tools_pass_params(daemon):
         "resummarize": {"session_id": "aaa111", "state": "TRANSCRIBED"},
         "update_followup": lambda p: {"session_id": p["session_id"], "revision": 3,
                                       "resend": p["resend"], "telegram": "pending"},
+        "session_detail": lambda p: detail(),  # has_audio=True, title="Синк"
         "set_keep_audio": lambda p: {"session_id": p["session_id"], "keep_audio": p["keep"]},
         "delete_session": {"session_id": "aaa111", "deleted": True},
     })
@@ -489,13 +492,22 @@ def test_edit_tools_pass_params(daemon):
         ("rename_session", {"session_id": "aaa111", "title": "Ретро"}),
         ("resummarize", {"session_id": "aaa111"}),
         ("update_followup", {"session_id": "aaa111", "followup": dict(GOOD), "resend": True}),
+        ("session_detail", {"session_id": "aaa111"}),  # set_keep_audio: has_audio?
         ("set_keep_audio", {"session_id": "aaa111", "keep": True}),
+        ("session_detail", {"session_id": "aaa111"}),  # delete_meeting: сверка названия
         ("delete_session", {"session_id": "aaa111", "title": "Синк"}),
     ]
 
 
+def test_set_keep_audio_refuses_when_audio_already_gone(daemon):
+    daemon.handlers["session_detail"] = lambda p: detail(session={"has_audio": False})
+    out = mcp_server.set_keep_audio("aaa111", True)
+    assert "аудио уже нет" in out
+    assert not any(c[0] == "set_keep_audio" for c in daemon.calls)
+
+
 def test_delete_with_wrong_title_is_readable(daemon):
-    daemon.handlers["delete_session"] = control.DaemonError(
-        "bad_params", "название не совпадает: встреча aaa111 называется «Синк»")
+    daemon.handlers["session_detail"] = lambda p: detail()  # title="Синк"
     with pytest.raises(ToolError, match="называется «Синк»"):
         mcp_server.delete_meeting("aaa111", "Ретро")
+    assert not any(c[0] == "delete_session" for c in daemon.calls)

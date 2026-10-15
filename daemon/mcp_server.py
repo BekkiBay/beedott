@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from daemon import control
 from daemon.timeutil import to_local
@@ -43,7 +43,9 @@ INSTRUCTIONS = (
     "Править встречи можно только по просьбе пользователя. Перед update_followup "
     "прочитай встречу через get_meeting и пришли фоллоу-ап целиком, изменив только "
     "то, о чём просили; resend=true — только если пользователь просил отправить в "
-    "Telegram. Удаляй встречу только по явной просьбе."
+    "Telegram. Удаляй встречу только по явной просьбе, с её точным названием; если "
+    "delete_meeting ответит, что название не совпало — переспроси пользователя, не "
+    "повторяй удаление с названием из этой ошибки."
 )
 
 server = MCPServer(name="beedott", instructions=INSTRUCTIONS)
@@ -297,6 +299,12 @@ def tool_errors(fn):
             if exc.code == "not_found":
                 raise ToolError(f"Встреча не найдена ({exc.message}) — возьми id из "
                                 "list_meetings или search_meetings") from exc
+            if exc.code == "unknown_method":
+                # Старый демон не знает метод — обычно после обновления BeeDott
+                # без перезапуска (сокет остался от прежней версии процесса).
+                raise ToolError("BeeDott нужно перезапустить (значок BeeDott → "
+                                "Выйти, затем открыть снова), чтобы появилась эта "
+                                "функция") from exc
             raise ToolError(f"BeeDott: {exc.message}") from exc
         except Exception as exc:  # noqa: BLE001
             raise ToolError(f"BeeDott: ошибка — {type(exc).__name__}: {exc}") from exc
@@ -373,12 +381,11 @@ def recording_status() -> str:
 class ActionItem(TypedDict):
     task: str
     owner: str
-    deadline: str | None
+    deadline: NotRequired[str | None]  # демон сам подставит None, если не прислать
 
 
 class Followup(TypedDict):
-    """Фоллоу-ап по схеме SPEC_v3 §7; окончательная проверка — в демоне
-    (summarizer.validate_followup)."""
+    """Фоллоу-ап встречи — те же пять разделов, что показывает get_meeting."""
     context: str
     discussed: list[str]
     decisions: list[str]
@@ -410,18 +417,19 @@ def resummarize_meeting(meeting_id: str) -> str:
 def update_followup(meeting_id: str, followup: Followup, resend: bool = False) -> str:
     """Заменить фоллоу-ап встречи исправленной версией. Сначала прочитай встречу
     через get_meeting и пришли фоллоу-ап ЦЕЛИКОМ (все пять разделов), изменив
-    только то, о чём просил пользователь. deadline — дата, "asap" или null.
-    resend=true — ещё и отправить новую версию в Telegram ответом на прежнюю
-    (только если пользователь просил)."""
+    только то, о чём просил пользователь. В get_meeting пустой раздел показан
+    как «нет» — пришли [] (или "" для context), а не ["нет"]. deadline — дата
+    "YYYY-MM-DD", "asap" или null. resend=true — ещё и отправить новую версию
+    в Telegram ответом на прежнюю (только если пользователь просил)."""
     r = _call("update_followup", {"session_id": meeting_id, "followup": dict(followup),
                                   "resend": resend})
     sent = {
-        "pending": "Новая версия уйдёт в Telegram ответом на прежнюю.",
+        "pending": "Новая версия уйдёт в Telegram.",
         "unchanged": "В Telegram не отправляю.",
         "off": "Telegram не подключён.",
     }.get(r.get("telegram"), "")
-    return (f"Фоллоу-ап обновлён (ревизия {r['revision']}); заметка в ~/MeetMind "
-            f"обновится. {sent} Прежняя версия сохранена.").strip()
+    return (f"Фоллоу-ап обновлён (ревизия {r['revision']}). {sent} "
+            "Заметка обновится. Прежняя версия сохранена в папке встречи.").strip()
 
 
 @server.tool(annotations=EDIT, structured_output=False)
@@ -429,6 +437,10 @@ def update_followup(meeting_id: str, followup: Followup, resend: bool = False) -
 def set_keep_audio(meeting_id: str, keep: bool) -> str:
     """Хранить аудио встречи (keep=true): автоочистка старых записей его не
     удалит. keep=false — снова по общим правилам."""
+    if keep:
+        detail = _call("session_detail", {"session_id": meeting_id})
+        if not detail["session"].get("has_audio"):
+            return "У этой встречи аудио уже нет — закреплять нечего."
     _call("set_keep_audio", {"session_id": meeting_id, "keep": keep})
     return ("Аудио закреплено — автоочистка его не удалит." if keep
             else "Аудио снова удаляется по общим правилам.")
@@ -440,7 +452,13 @@ def delete_meeting(meeting_id: str, title: str) -> str:
     """Удалить встречу навсегда: аудио, расшифровку, фоллоу-ап и поиск. Заметки
     в ~/MeetMind и сообщения в Telegram останутся. Только по явной просьбе
     пользователя. title — точное название встречи из list_meetings или
-    get_meeting: если не совпадёт, ничего не удалится."""
+    get_meeting: если не совпадёт, ничего не удалится — если название не
+    совпало, переспроси пользователя, не повторяй с названием из ошибки."""
+    detail = _call("session_detail", {"session_id": meeting_id})
+    actual = _title(detail["session"])
+    if actual.strip() != title.strip():
+        raise ToolError(f"Название не совпадает: встреча называется «{actual}». "
+                        "Переспроси пользователя, не удаляй по названию из этой ошибки.")
     _call("delete_session", {"session_id": meeting_id, "title": title})
     return f"Встреча «{title}» удалена. Заметки в ~/MeetMind и сообщения в Telegram остались."
 
