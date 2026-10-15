@@ -7,8 +7,10 @@ Claude присылает исправленный фоллоу-ап целик�
 """
 import json
 import os
+import shutil
 from pathlib import Path
 
+import config
 from daemon import db, stages, summarizer
 from daemon.paths import session_dir
 from daemon.render import render_followup
@@ -61,6 +63,24 @@ def _check_editable(con, row, sid: str) -> Path:
     return sdir
 
 
+def _telegram_status(con, sid: str, *, resend: bool) -> str:
+    """Честный статус Telegram в ответе apply() — не выдавать «доставлено»,
+    пока это не так. "off" — канал не настроен (та же проверка, что
+    stages._build_sinks: config.TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID). Иначе
+    "pending" — просили resend, или строки deliveries для telegram нет, или
+    она не 'delivered' (упала/в процессе). Иначе — прежнее сообщение никто
+    не трогал, "unchanged"."""
+    if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID):
+        return "off"
+    if resend:
+        return "pending"
+    row = con.execute(
+        "SELECT status FROM deliveries WHERE session_id=? AND sink='telegram'", (sid,)).fetchone()
+    if row is None or row["status"] != "delivered":
+        return "pending"
+    return "unchanged"
+
+
 def apply(con, sid: str, followup, *, resend: bool) -> dict:
     """Записать исправленный фоллоу-ап новой ревизией и поставить повторную
     доставку. Вызывать под локом демона (DaemonApp.update_followup)."""
@@ -70,35 +90,49 @@ def apply(con, sid: str, followup, *, resend: bool) -> dict:
         clean = summarizer.validate_followup(summarizer.normalize_followup(followup))
     except ValueError as exc:
         raise EditError("bad_params", f"фоллоу-ап не по схеме: {exc}") from exc
+    if not (clean["context"].strip() or clean["discussed"] or clean["decisions"]
+            or clean["action_items"] or clean["open_questions"]):
+        raise EditError("bad_params",
+                        "пустой фоллоу-ап — пришли его целиком, меняя только нужное")
 
     path = sdir / "followup.json"
     try:
         prev = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         prev = {}
+    if not isinstance(prev, dict):
+        prev = {}
     try:
         revision = int(prev.get("revision", 1)) + 1
     except (TypeError, ValueError):
         revision = 2
-    engine = prev.get("engine") or "claude"
+    prev_engine = prev.get("engine")
+    engine = prev_engine if isinstance(prev_engine, str) and prev_engine else "claude"
     new = dict(clean, engine=engine, revision=revision)
     title = db.session_title(row)
     md = render_followup(new, engine=engine, title=title,
                          duration_min=stages._duration_min(row), revision=revision)
+    if path.exists():
+        # прежняя ревизия остаётся на диске — Claude может её спросить обратно
+        shutil.copy2(path, sdir / f"followup.r{revision - 1}.json")
     _write_atomic(path, json.dumps(new, ensure_ascii=False, indent=1))
     _write_atomic(sdir / "followup.md", md)
 
     tpath = sdir / "transcript.txt"
     transcript = tpath.read_text(encoding="utf-8") if tpath.exists() else ""
-    db.index_note(con, sid, title=title, transcript=transcript, summary=md)
-
-    sinks = ["note", "obsidian"]
-    if resend:
-        prepare_telegram_resend(sdir)
-        sinks.append("telegram")
-    # без commit — уйдёт одной транзакцией с redeliver
-    con.execute(
-        f"UPDATE deliveries SET status='pending', delivered_at=NULL"
-        f" WHERE session_id=? AND sink IN ({', '.join('?' * len(sinks))})", (sid, *sinks))
-    db.redeliver(con, sid)
-    return {"session_id": sid, "revision": revision, "resend": resend}
+    telegram = _telegram_status(con, sid, resend=resend)
+    try:
+        db.index_note(con, sid, title=title, transcript=transcript, summary=md)
+        sinks = ["note", "obsidian"]
+        if resend:
+            prepare_telegram_resend(sdir)
+            sinks.append("telegram")
+        # без отдельного commit — уйдёт одной транзакцией с redeliver
+        con.execute(
+            f"UPDATE deliveries SET status='pending', delivered_at=NULL"
+            f" WHERE session_id=? AND sink IN ({', '.join('?' * len(sinks))})", (sid, *sinks))
+        db.redeliver(con, sid)
+    except Exception:
+        con.rollback()
+        raise
+    return {"session_id": sid, "revision": revision, "resend": resend, "telegram": telegram}
