@@ -7,11 +7,10 @@ Claude присылает исправленный фоллоу-ап целик�
 """
 import json
 import os
-import shutil
 from pathlib import Path
 
 import config
-from daemon import db, stages, summarizer
+from daemon import db, revisions, stages, summarizer
 from daemon.paths import session_dir
 from daemon.render import render_followup
 from daemon.states import State
@@ -100,25 +99,15 @@ def apply(con, sid: str, followup, *, resend: bool) -> dict:
                         "пустой фоллоу-ап — пришли его целиком, меняя только нужное")
 
     path = sdir / "followup.json"
-    try:
-        prev = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        prev = {}
-    if not isinstance(prev, dict):
-        prev = {}
-    try:
-        revision = int(prev.get("revision", 1)) + 1
-    except (TypeError, ValueError):
-        revision = 2
+    prev = revisions.previous(sdir)
+    revision = revisions.next_revision(prev)
     prev_engine = prev.get("engine")
     engine = prev_engine if isinstance(prev_engine, str) and prev_engine else "claude"
     new = dict(clean, engine=engine, revision=revision)
     title = db.session_title(row)
     md = render_followup(new, engine=engine, title=title,
                          duration_min=stages._duration_min(row), revision=revision)
-    if path.exists():
-        # прежняя ревизия остаётся на диске — на случай отката вручную
-        shutil.copy2(path, sdir / f"followup.r{revision - 1}.json")
+    revisions.backup(sdir, revision)
     _write_atomic(path, json.dumps(new, ensure_ascii=False, indent=1))
     _write_atomic(sdir / "followup.md", md)
 

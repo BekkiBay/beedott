@@ -107,3 +107,26 @@ def test_backend_failure_propagates_for_retry(session, monkeypatch):
     monkeypatch.setattr(claude_cli, "summarize", broken)
     with pytest.raises(ValueError):
         stages.summarize(session)
+
+
+def test_resummarize_keeps_previous_revision_on_disk(session, monkeypatch):
+    monkeypatch.setattr(config, "SUMMARY_BACKEND", "claude_cli")
+    monkeypatch.setattr(claude_cli, "summarize", lambda t, m: dict(GOOD))
+    sdir = session_dir(session["id"])
+
+    stages.summarize(session)
+    first = (sdir / "followup.json").read_text(encoding="utf-8")
+    stages.summarize(session)
+
+    assert (sdir / "followup.r1.json").read_text(encoding="utf-8") == first
+    assert _followup(session["id"])["revision"] == 2
+
+
+def test_resummarize_tolerates_non_dict_old_followup(session, monkeypatch):
+    monkeypatch.setattr(config, "SUMMARY_BACKEND", "claude_cli")
+    monkeypatch.setattr(claude_cli, "summarize", lambda t, m: dict(GOOD))
+    (session_dir(session["id"]) / "followup.json").write_text("[]", encoding="utf-8")
+
+    stages.summarize(session)
+
+    assert _followup(session["id"])["revision"] == 2

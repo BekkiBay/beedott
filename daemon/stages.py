@@ -13,7 +13,7 @@ from pathlib import Path
 import soundfile as sf
 
 import config
-from daemon import anthropic_api, claude_cli, db
+from daemon import anthropic_api, claude_cli, db, revisions
 from daemon.notifier import notify
 from daemon.orchestrator import PermanentStageError
 from daemon.paths import session_dir
@@ -144,13 +144,8 @@ def summarize(session) -> None:
                    session_id=session["id"])
         raise
 
-    revision = 1
-    prev_path = sdir / "followup.json"
-    if prev_path.exists():
-        try:
-            revision = int(json.loads(prev_path.read_text(encoding="utf-8")).get("revision", 1)) + 1
-        except (OSError, ValueError, TypeError):
-            revision = 2
+    revision = revisions.next_revision(revisions.previous(sdir))
+    revisions.backup(sdir, revision)
     followup = dict(followup, engine=engine, revision=revision)
     (sdir / "followup.json").write_text(
         json.dumps(followup, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -160,7 +155,8 @@ def summarize(session) -> None:
     (sdir / "followup.md").write_text(md, encoding="utf-8")
 
     # FTS-индекс для поиска в Библиотеке (экран 05). Отдельный короткоживущий
-    # коннект: стадии не держат con, writer notes_fts — только summarize.
+    # коннект: стадии не держат con. notes_fts пишет не только summarize —
+    # так же followup_edit.apply (правка из Claude) и DaemonApp.rename_session.
     con = db.connect()
     try:
         db.index_note(con, session["id"], title=db.session_title(session),
