@@ -613,3 +613,62 @@ def test_status_claude_state_never_raises(appdir, capsys, monkeypatch):
     monkeypatch.setattr(setup, "_read_desktop_config", boom)
     assert setup.main(["status"]) == 0
     assert events(capsys)[-1]["claude"] == "bad_config"
+
+
+# ───── MCP: Claude Code ───────────────────────────────────────────────────────
+
+
+def fake_claude(tmp_path, monkeypatch, exit_code=0) -> Path:
+    """Фейковый claude CLI: пишет argv в файл, выходит с exit_code."""
+    log = tmp_path / "claude-argv.jsonl"
+    script = tmp_path / "claude"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"open({str(log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        f"sys.exit({exit_code})\n")
+    script.chmod(0o755)
+    from daemon import claude_auth
+    monkeypatch.setattr(claude_auth, "claude_bin", lambda: str(script))
+    return log
+
+
+def claude_calls(log: Path) -> list[list[str]]:
+    return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def test_claude_code_connect_registers_same_launch(appdir, capsys, monkeypatch, tmp_path):
+    log = fake_claude(tmp_path, monkeypatch)
+    assert setup.main(["claude-code-connect"]) == 0
+    result = events(capsys)[-1]
+    assert result["claude_code"] == "added"
+    remove, add = claude_calls(log)
+    assert remove == ["mcp", "remove", "--scope", "user", "beedott"]
+    assert add[:5] == ["mcp", "add-json", "--scope", "user", "beedott"]
+    assert json.loads(add[5]) == {"type": "stdio", **setup.mcp_launch()}
+    assert shlex.split(result["command"]) == ["claude", *add]
+
+
+def test_claude_code_connect_without_cli(appdir, capsys):
+    assert setup.main(["claude-code-connect"]) == 0
+    result = events(capsys)[-1]
+    assert result["claude_code"] == "absent"
+    assert result["command"].startswith("claude mcp add-json --scope user beedott ")
+
+
+def test_claude_code_connect_cli_fails(appdir, capsys, monkeypatch, tmp_path):
+    fake_claude(tmp_path, monkeypatch, exit_code=1)
+    assert setup.main(["claude-code-connect"]) == 0
+    assert events(capsys)[-1]["claude_code"] == "failed"
+
+
+def test_claude_code_disconnect(appdir, capsys, monkeypatch, tmp_path):
+    log = fake_claude(tmp_path, monkeypatch)
+    setup.main(["claude-code-disconnect"])
+    assert events(capsys)[-1] == {"event": "ok", "claude_code": "removed"}
+    assert claude_calls(log) == [["mcp", "remove", "--scope", "user", "beedott"]]
+
+
+def test_claude_code_disconnect_without_cli(appdir, capsys):
+    setup.main(["claude-code-disconnect"])
+    assert events(capsys)[-1] == {"event": "ok", "claude_code": "absent"}

@@ -15,7 +15,9 @@ Anthropic, токен бота) приходят только через stdin �
 import errno
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -37,6 +39,7 @@ MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
 SUMMARY_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1")
 MAX_INSTRUCTIONS = 20_000
 WEIGHT_FILES = ("weights.safetensors", "weights.npz")
+CLAUDE_CLI_TIMEOUT = 30
 
 # MCP-сервер BeeDott в конфигах Claude (спек 2026-10-14-claude-mcp-design.md).
 CLAUDE_SERVER_NAME = "beedott"
@@ -322,6 +325,55 @@ def claude_desktop_state() -> str | None:
     return "stale"
 
 
+# ─── MCP: Claude Code ─────────────────────────────────────────────────────────
+
+
+def _claude_code_entry() -> str:
+    return json.dumps({"type": "stdio", **mcp_launch()}, ensure_ascii=False)
+
+
+def _claude_cli() -> str | None:
+    """claude CLI так же, как его ищут status и демон. import config кладёт
+    config.env в os.environ: MEETMIND_CLAUDE_BIN и CLAUDE_CONFIG_DIR (свой
+    аккаунт Claude Code) учитываются."""
+    import config  # noqa: F401
+    from daemon import claude_auth
+    return claude_auth.claude_bin()
+
+
+def _claude_run(binp: str, *args: str) -> bool:
+    from daemon import claude_auth
+    try:
+        r = subprocess.run([binp, *args], env=claude_auth.claude_env(None),
+                           capture_output=True, timeout=CLAUDE_CLI_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return r.returncode == 0
+
+
+def cmd_claude_code_connect() -> dict:
+    """remove (ошибку игнорируем) + add-json --scope user. Неудача CLI — не
+    ошибка команды, а "failed"; command — та же регистрация строкой для
+    терминала (свой CLAUDE_CONFIG_DIR или CLI не нашёлся)."""
+    entry = _claude_code_entry()
+    command = " ".join(["claude", "mcp", "add-json", "--scope", "user",
+                        CLAUDE_SERVER_NAME, shlex.quote(entry)])
+    binp = _claude_cli()
+    if not binp:
+        return {"claude_code": "absent", "command": command}
+    _claude_run(binp, "mcp", "remove", "--scope", "user", CLAUDE_SERVER_NAME)
+    ok = _claude_run(binp, "mcp", "add-json", "--scope", "user", CLAUDE_SERVER_NAME, entry)
+    return {"claude_code": "added" if ok else "failed", "command": command}
+
+
+def cmd_claude_code_disconnect() -> dict:
+    binp = _claude_cli()
+    if not binp:
+        return {"claude_code": "absent"}
+    ok = _claude_run(binp, "mcp", "remove", "--scope", "user", CLAUDE_SERVER_NAME)
+    return {"claude_code": "removed" if ok else "failed"}
+
+
 def _classify(exc: BaseException) -> str:
     if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
         return "disk_full"
@@ -442,6 +494,8 @@ COMMANDS = {
     "set-instructions": cmd_set_instructions,
     "claude-connect": cmd_claude_connect,
     "claude-disconnect": cmd_claude_disconnect,
+    "claude-code-connect": cmd_claude_code_connect,
+    "claude-code-disconnect": cmd_claude_code_disconnect,
 }
 # Команды, которым нужен секрет из stdin (первая строка).
 SECRET_COMMANDS = {"check-key", "telegram-check", "telegram-connect"}
