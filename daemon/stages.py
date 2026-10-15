@@ -38,13 +38,6 @@ def _duration_min(session) -> int:
         return 0
 
 
-def _title(session) -> str:
-    if session["title"]:
-        return session["title"]
-    hhmm = to_local(session["started_at"]).strftime("%H:%M") if session["started_at"] else "??:??"
-    return f"Встреча {hhmm}"
-
-
 def _attendees(session) -> list[str]:
     """Участники из календаря (продукт P8), JSON-список в sessions.attendees."""
     try:
@@ -134,7 +127,7 @@ def _run_summary(transcript: str, meta: dict) -> tuple[dict, str]:
 def summarize(session) -> None:
     sdir = session_dir(session["id"])
     transcript = (sdir / "transcript.txt").read_text(encoding="utf-8")
-    meta = {"title": _title(session), "duration_min": _duration_min(session),
+    meta = {"title": db.session_title(session), "duration_min": _duration_min(session),
             "attendees": _attendees(session),
             "date": to_local(session["started_at"]).date() if session["started_at"] else None}
 
@@ -162,7 +155,7 @@ def summarize(session) -> None:
     (sdir / "followup.json").write_text(
         json.dumps(followup, ensure_ascii=False, indent=1), encoding="utf-8")
     md = render_followup(
-        followup, engine=engine, title=_title(session),
+        followup, engine=engine, title=db.session_title(session),
         duration_min=_duration_min(session), revision=revision)
     (sdir / "followup.md").write_text(md, encoding="utf-8")
 
@@ -170,7 +163,7 @@ def summarize(session) -> None:
     # коннект: стадии не держат con, writer notes_fts — только summarize.
     con = db.connect()
     try:
-        db.index_note(con, session["id"], title=_title(session),
+        db.index_note(con, session["id"], title=db.session_title(session),
                       transcript=transcript, summary=md)
     finally:
         con.close()
@@ -212,7 +205,7 @@ def deliver(session) -> None:
         if row and row["status"] == "delivered":
             continue
         try:
-            res = sink.send(md, title=_title(session), when=when, session_id=sid)
+            res = sink.send(md, title=db.session_title(session), when=when, session_id=sid)
             ok, detail = res.success, res.detail
         except Exception as exc:  # noqa: BLE001
             ok, detail = False, str(exc)

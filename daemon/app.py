@@ -253,11 +253,12 @@ class DaemonApp:
         last_err = self._con.execute(
             "SELECT session_id, stage, last_error FROM pipeline_jobs"
             " WHERE last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 1").fetchone()
-        rec_title = rec_started = None
+        rec_title = rec_started = rec_display = None
         if self._active_sid is not None:
             rec = db.get_session(self._con, self._active_sid)
             if rec is not None:
                 rec_title, rec_started = rec["title"], rec["started_at"]
+                rec_display = db.session_title(rec)
         return {
             "recording": self._active_sid,
             # owner=app: Swift сверяет со своим движком (осиротевшая запись →
@@ -265,6 +266,7 @@ class DaemonApp:
             "recording_owner": self._owner,
             "stop_requested": self._stop_request,
             "recording_title": rec_title,
+            "recording_display_title": rec_display,
             "recording_started_at": rec_started,
             "sessions": {r["state"]: r["n"] for r in rows},
             "queue": [dict(r) for r in jobs],
@@ -324,6 +326,7 @@ class DaemonApp:
                     " ORDER BY sink", (row["id"],))]
             out.append({
                 "id": row["id"], "title": row["title"],
+                "display_title": db.session_title(row),
                 "started_at": row["started_at"],
                 "duration_min": self._duration_min(row),
                 "state": row["state"], "status": status, "error": error,
@@ -381,7 +384,10 @@ class DaemonApp:
         sinks = [dict(r) for r in self._con.execute(
             "SELECT sink, status, delivered_at, detail FROM deliveries"
             " WHERE session_id=? ORDER BY sink", (sid,))]
-        return {"session": dict(row), "followup": followup,
+        session = dict(row)
+        session["display_title"] = db.session_title(row)
+        session["has_audio"] = bool(row["audio_path"]) and Path(row["audio_path"]).exists()
+        return {"session": session, "followup": followup,
                 "transcript": transcript, "pipeline": pipeline, "sinks": sinks}
 
     def search(self, params: dict) -> dict:

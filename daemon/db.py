@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from daemon.paths import db_path, session_dir
 from daemon.states import State, assert_transition
+from daemon.timeutil import to_local
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -35,6 +36,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def session_title(row) -> str:
+    """Отображаемое название встречи: своё или «Встреча ЧЧ:ММ» по местному
+    времени начала. Одно имя для Telegram, заметки, поиска и Claude (MCP)."""
+    if row["title"]:
+        return row["title"]
+    hhmm = to_local(row["started_at"]).strftime("%H:%M") if row["started_at"] else "??:??"
+    return f"Встреча {hhmm}"
 
 
 def connect() -> sqlite3.Connection:

@@ -662,3 +662,26 @@ def test_prompt_mentions_attendees():
     meta = {"title": "Синк", "duration_min": 30, "attendees": ["Аня", "Борис"]}
     assert "Аня, Борис" in build_prompt("текст", meta)
     assert "Участники" not in build_prompt("текст", {"title": "Синк"})
+
+
+# ───── MCP: одно отображаемое название, has_audio ─────────────────────────────
+
+
+def test_sessions_list_and_detail_have_display_title(app):
+    con = app._con
+    named = _mk_session(con, title="Синк")
+    untitled = _mk_session(con, title=None)
+    rows = {r["id"]: r for r in app.sessions_list({})["sessions"]}
+    assert rows[named]["display_title"] == "Синк"
+    assert rows[untitled]["title"] is None
+    assert rows[untitled]["display_title"].startswith("Встреча ")
+    session = app.session_detail({"session_id": untitled})["session"]
+    assert session["display_title"] == rows[untitled]["display_title"]
+    assert session["has_audio"] is False
+
+
+def test_status_reports_recording_display_title(app):
+    app.start_recording({"audio_path_owner": "app"})
+    st = app.status({})
+    assert st["recording_title"] is None
+    assert st["recording_display_title"].startswith("Встреча ")

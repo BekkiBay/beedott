@@ -19,7 +19,7 @@ def test_to_local_converts_utc_iso_to_configured_zone(monkeypatch):
 def test_default_title_uses_local_time(monkeypatch):
     monkeypatch.setenv("MEETMIND_TZ", "Asia/Tashkent")
     row = {"title": None, "started_at": "2026-07-15T05:10:51+00:00"}
-    assert stages._title(row) == "Встреча 10:10"
+    assert db.session_title(row) == "Встреча 10:10"
 
 
 def test_deliver_passes_local_time_to_sinks(tmp_path, monkeypatch):
