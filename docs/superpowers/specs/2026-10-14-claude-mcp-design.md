@@ -196,20 +196,27 @@ MCP-сервер отображает: `DaemonUnavailable` → «BeeDott не з
 `apply`:
 
 1. Сессии нет или она `CANCELLED` → `not_found`.
-2. Состояние: правка разрешена только в `DELIVERED` или `FAILED` и только
-   если есть `followup.json`. Иначе: `DETECTED` / `RECORDING` → `busy` «идёт
-   запись этой встречи»; прочие состояния или job этой сессии в `running` →
-   `busy` «встреча сейчас обрабатывается — попробуй, когда закончится»;
-   `FAILED` без фоллоу-апа → `no_followup`: если `transcript.txt` есть —
-   «фоллоу-апа ещё нет — сначала пересобери саммари», если нет — «встреча не
-   обработалась — повтори обработку в BeeDott».
+2. Состояние: правка разрешена в `DELIVERED`, `FAILED` или `SUMMARIZED`
+   (повторная правка, пока прежняя ещё ждёт доставки — `SUMMARIZED →
+   SUMMARIZED` разрешённый самопереход, `redeliver` его отрабатывает) и
+   только если есть `followup.json`. Иначе: `DETECTED` / `RECORDING` →
+   `busy` «идёт запись этой встречи»; прочие состояния или job этой сессии в
+   `running` → `busy` «встреча сейчас обрабатывается — попробуй, когда
+   закончится»; `FAILED` без фоллоу-апа → `no_followup`: если
+   `transcript.txt` есть — «фоллоу-апа ещё нет — сначала пересобери
+   саммари», если нет — «встреча не обработалась — повтори обработку в
+   BeeDott».
 3. `summarizer.normalize_followup` + `validate_followup`; ошибка →
-   `bad_params` с текстом валидатора, файлы не тронуты.
+   `bad_params` с текстом валидатора, файлы не тронуты. Пустой фоллоу-ап
+   (все пять полей пустые) — тоже `bad_params`: Claude присылает его целиком,
+   случайно обнулённый раздел не должен затереть прежний.
 4. Новая версия: поля из запроса + `engine` из прежнего `followup.json`
    (как собрана исходная версия) + `revision` = прежняя + 1 (та же логика,
    что в `stages.summarize`).
 5. `followup.json` и `followup.md` (`render.render_followup`, как в
-   `stages.summarize`) пишутся атомарно: `.part` + `replace`.
+   `stages.summarize`) пишутся атомарно: `.part` + `replace`; прежняя версия
+   остаётся на диске как `followup.r{N}.json` (N — её ревизия) — на случай
+   отката вручную.
 6. `db.index_note` — поиск видит новую версию. Второй писатель `notes_fts`
    кроме стадии summarize (уже есть прецедент — `rename_session`); пишет
    демон под своим локом, гонки со стадией нет: шаг 2 не пускает правку во
@@ -240,7 +247,20 @@ MCP-сервер отображает: `DaemonUnavailable` → «BeeDott не з
    `SUMMARIZED → DELIVERING → DELIVERED`. В `daemon/states.py` добавляется
    переход `DELIVERED → SUMMARIZED` (сейчас из `DELIVERED` разрешён только
    `TRANSCRIBED`); `FAILED → SUMMARIZED` уже есть.
-9. Ответ: `{"session_id", "revision", "resend"}`.
+9. Ответ: `{"session_id", "revision", "resend", "telegram"}` — `telegram` ∈
+   `off` (канал не настроен), `pending` (просили `resend`, или прежняя
+   доставка не `delivered`), `unchanged` (прежнее сообщение не трогаем):
+   честный статус, не «доставлено», пока это не так.
+
+`DaemonApp.resummarize` («Пересобрать саммари») — та же осторожность, другим
+путём: сессии нет → `not_found`; нет `transcript.txt` → `no_transcript`
+«расшифровки нет — сначала повтори обработку встречи»; job сессии в
+`running` → `busy` «встреча сейчас обрабатывается — попробуй, когда
+закончится»; состояние не `DELIVERED` / `FAILED` / `SUMMARIZING` /
+`DELIVERING` (последние два — failed_retry, сессия ещё не откатилась, но
+джоба не бежит) → `busy` с текстом по месту: `SUMMARIZED` — «прошлая правка
+ещё доставляется — попробуй через минуту», запись (`DETECTED`/`RECORDING`) —
+«идёт запись этой встречи», прочее — тот же общий текст.
 
 ### Старт и стоп записи
 
