@@ -65,6 +65,11 @@ enum ClaudeConnection: Equatable {
     case disconnected, connected, stale, badConfig
 }
 
+/// Claude (MCP) просит начать запись: поле start_requested в status демона.
+struct StartRequest: Equatable {
+    let title: String?
+}
+
 enum RuntimeLogic {
     static let defaultSummaryModel = "claude-opus-5-5"
     static let summaryModels: [SummaryModelOption] = [
@@ -100,6 +105,14 @@ enum RuntimeLogic {
         queueRows
             .filter { ["pending", "queued", "running"].contains($0["status"] as? String ?? "") }
             .reduce(0) { $0 + (($1["n"] as? Int) ?? 0) }
+    }
+
+    /// start_requested из status: {"title": ...} — запрос есть; null или поля
+    /// нет (старый демон) — нет. Пустое название — nil (возьмём из Календаря).
+    static func startRequest(_ status: [String: Any]) -> StartRequest? {
+        guard let request = status["start_requested"] as? [String: Any] else { return nil }
+        let title = (request["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return StartRequest(title: (title?.isEmpty ?? true) ? nil : title)
     }
 
     /// Дескриптор лога в режиме O_APPEND: каждая запись — в текущий конец файла.

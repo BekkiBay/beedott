@@ -340,4 +340,13 @@ do {
           "путь в тексте bad_config")
 }
 
+// 26. Запрос записи от Claude (MCP) в status демона.
+do {
+    check(RuntimeLogic.startRequest(["start_requested": ["title": "Синк"]]) == StartRequest(title: "Синк"), "с названием")
+    check(RuntimeLogic.startRequest(["start_requested": ["title": NSNull()]]) == StartRequest(title: nil), "без названия")
+    check(RuntimeLogic.startRequest(["start_requested": ["title": "  "]]) == StartRequest(title: nil), "пустое название")
+    check(RuntimeLogic.startRequest(["start_requested": NSNull()]) == nil, "null — запроса нет")
+    check(RuntimeLogic.startRequest([:]) == nil, "старый демон без поля")
+}
+
 if failures == 0 { print("OK — все тесты прошли") } else { print("\(failures) провалено"); exit(1) }

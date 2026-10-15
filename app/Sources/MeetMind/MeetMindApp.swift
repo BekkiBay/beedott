@@ -316,8 +316,8 @@ final class AppModel: ObservableObject {
                     } else if sid == self.capture.sessionId,
                               let reason = result["stop_requested"] as? String {
                         // Предохранитель демона (лимит длительности, диск,
-                        // размер WAV) — аудит T7.
-                        NSLog("MeetMind: предохранитель (%@) — останавливаю запись", reason)
+                        // размер WAV) — аудит T7 — или Claude (MCP, причина "mcp").
+                        NSLog("MeetMind: демон просит остановить запись (%@)", reason)
                         try? self.performStopRecording()
                         recording = nil
                     }
@@ -331,6 +331,18 @@ final class AppModel: ObservableObject {
                     self.capture.sessionId = nil
                     self.capture.owner = "daemon"
                     NSLog("MeetMind: демон закрыл запись — движок остановлен (%llu кадров)", frames)
+                }
+                // Claude (MCP) попросил начать запись — как ⌘⇧R, но с его
+                // названием. Флаг снимает демон в start_recording.
+                if recording == nil, self.capture.engine == nil,
+                   let request = RuntimeLogic.startRequest(result) {
+                    do {
+                        recording = try self.performStartRecording(source: "mcp", title: request.title)
+                        NSLog("MeetMind: запись по просьбе Claude началась")
+                    } catch {
+                        NSLog("MeetMind: запись по просьбе Claude не началась (%@)",
+                              error.localizedDescription)
+                    }
                 }
                 // P16: пока мы поллим, демон копит уведомления для нас (вместо
                 // osascript) — забираем и показываем каждое ровно один раз.
@@ -633,7 +645,7 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    nonisolated private func performStartRecording(source: String = "manual") throws -> String? {
+    nonisolated private func performStartRecording(source: String = "manual", title: String? = nil) throws -> String? {
         // Аудит T9: повторный старт не должен трогать идущую запись — раньше
         // ошибка start_recording обнуляла capture.engine, и запись обрывалась.
         guard capture.engine == nil else {
@@ -642,6 +654,8 @@ final class AppModel: ObservableObject {
         // P8: название и участники текущей встречи из Календаря (синхронно, без
         // диалога). Нет доступа / события — nil, встречу назовёт демон.
         let meeting = CalendarContext.currentMeeting()
+        // Название от Claude (MCP) главнее Календаря; участники — из Календаря.
+        let recordingTitle = title ?? meeting?.title
         let meetingKey = meeting?.meetCode.map { "meet:\($0)" }
         let probeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("meetmind-tap-probe-\(UUID().uuidString).wav")
@@ -656,7 +670,7 @@ final class AppModel: ObservableObject {
             capture.owner = "daemon"
             capture.engine = nil
             let result = try ControlClient.startRecording(
-                title: meeting?.title, attendees: meeting?.attendees, audioPathOwner: "daemon",
+                title: recordingTitle, attendees: meeting?.attendees, audioPathOwner: "daemon",
                 source: source, meetingKey: meetingKey)
             return result["session_id"] as? String
         }
@@ -667,7 +681,7 @@ final class AppModel: ObservableObject {
         // Если демон успел завести сессию, но ответ не дошёл, её закроет
         // проверка осиротевшей записи в refreshStatus.
         let result = try ControlClient.startRecording(
-            title: meeting?.title, attendees: meeting?.attendees, audioPathOwner: "app",
+            title: recordingTitle, attendees: meeting?.attendees, audioPathOwner: "app",
             source: source, meetingKey: meetingKey)
         guard let audioPath = result["audio_path"] as? String,
               let sessionId = result["session_id"] as? String else {
