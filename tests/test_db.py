@@ -54,6 +54,13 @@ def test_reprocess_from_failed_resets_session_and_job(tmp_path, monkeypatch):
     assert job["stage"] == "transcribe" and job["status"] == "queued"
 
 
+def test_session_title_falls_back_when_started_at_unparseable():
+    """Битая/старая запись started_at не должна ронять session_title (его
+    зовут Telegram, заметка, поиск и Claude через MCP)."""
+    assert db.session_title({"title": None, "started_at": "не-дата"}) == "Встреча ??:??"
+    assert db.session_title({"title": None, "started_at": None}) == "Встреча ??:??"
+
+
 def test_migration_survives_concurrent_add_column(tmp_path, monkeypatch):
     """Два процесса открыли старую БД одновременно: оба увидели, что колонки
     нет, второй ALTER падает с «duplicate column». connect() не должен падать."""

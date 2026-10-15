@@ -57,6 +57,29 @@ def test_meeting_list_empty():
     assert mcp_server.format_meeting_list([]) == "Встреч пока нет."
 
 
+def test_title_falls_back_to_title_then_placeholder():
+    """Старый демон мог не писать display_title (совместимость)."""
+    assert mcp_server._title({"display_title": "Синк", "title": "x"}) == "Синк"
+    assert mcp_server._title({"title": "Старый формат"}) == "Старый формат"
+    assert mcp_server._title({}) == "Без названия"
+
+
+def test_meeting_list_without_display_title_uses_title():
+    sessions = [{"id": "old1", "title": "Старая сессия",
+                 "started_at": "2026-10-14T05:00:00+00:00", "duration_min": 10,
+                 "status": "delivered", "action_items": None}]
+    assert "**Старая сессия**" in mcp_server.format_meeting_list(sessions)
+
+
+def test_meeting_list_shows_recording_instead_of_mapped_status():
+    sessions = [{"id": "r1", "title": None, "display_title": "Встреча 09:00",
+                 "started_at": "2026-10-14T05:00:00+00:00", "duration_min": None,
+                 "status": "processing", "action_items": None, "state": "RECORDING"}]
+    out = mcp_server.format_meeting_list(sessions)
+    assert "идёт запись" in out
+    assert "обрабатывается" not in out
+
+
 def test_meeting_list_error_status_appends_trimmed_error():
     long_line = "о" * 250
     sessions = [{"id": "e1", "title": None, "display_title": "Сбой",
@@ -79,6 +102,23 @@ def test_search_groups_hits_by_meeting():
     assert "- расшифровка: про **отчёт**" in out
     assert "- саммари: сдать **отчёт**" in out
     assert "### Без названия — дата неизвестна · id `zzz999`" in out
+
+
+def test_search_snippet_newlines_become_spaces():
+    results = [{"session_id": "aaa111", "title": None, "source": "summary",
+                "snippet": "первая строка\nвторая строка"}]
+    out = mcp_server.format_search("x", results, SESSIONS, limit=10)
+    assert "- саммари: первая строка вторая строка" in out
+
+
+def test_search_uses_title_when_session_lacks_display_title():
+    """Старый демон мог не писать display_title в sessions_list (совместимость)."""
+    sessions = [{"id": "old1", "title": "Старая встреча",
+                 "started_at": "2026-10-14T05:00:00+00:00"}]
+    results = [{"session_id": "old1", "title": "Старая встреча",
+                "source": "summary", "snippet": "x"}]
+    out = mcp_server.format_search("x", results, sessions, limit=10)
+    assert "### Старая встреча" in out
 
 
 def test_search_limit_and_nothing_found():
@@ -120,6 +160,18 @@ def test_meeting_card_without_followup_and_failed_state():
     assert "ошибка: summarize: 529" in out
     assert "Аудио: нет" in out
     assert "Фоллоу-апа пока нет." in out
+
+
+def test_meeting_card_cancelled_state():
+    d = detail(followup=None, session={"state": "CANCELLED"})
+    out = mcp_server.format_meeting(d)
+    assert "отменена" in out
+
+
+def test_meeting_card_without_display_title_uses_title():
+    d = detail(session={"display_title": None, "title": "Старая карточка"})
+    out = mcp_server.format_meeting(d)
+    assert out.startswith("# Старая карточка")
 
 
 def test_meeting_card_failed_state_trims_long_pipeline_error():
@@ -222,6 +274,15 @@ def test_transcript_paging_covers_every_line_with_overlapping_speakers(monkeypat
 
     assert expected <= seen
     assert pages < 50
+
+
+def test_action_items_without_display_title_uses_title():
+    old_session = {"id": "old1", "title": "Старые задачи",
+                   "started_at": "2026-10-14T05:00:00+00:00"}
+    rows = [(old_session, dict(GOOD, action_items=[
+        {"task": "Сделать", "owner": "Bekzod", "deadline": None}]))]
+    out = mcp_server.format_action_items(rows, days=7)
+    assert "### Старые задачи" in out
 
 
 def test_action_items_and_status_formatting():

@@ -40,10 +40,14 @@ def now() -> str:
 
 def session_title(row) -> str:
     """Отображаемое название встречи: своё или «Встреча ЧЧ:ММ» по местному
-    времени начала. Одно имя для Telegram, заметки, поиска и Claude (MCP)."""
+    времени начала. Одно имя для Telegram, заметки, поиска и Claude (MCP).
+    started_at не парсится (битая/старая запись) — «??:??» вместо падения."""
     if row["title"]:
         return row["title"]
-    hhmm = to_local(row["started_at"]).strftime("%H:%M") if row["started_at"] else "??:??"
+    try:
+        hhmm = to_local(row["started_at"]).strftime("%H:%M") if row["started_at"] else "??:??"
+    except (ValueError, TypeError):
+        hhmm = "??:??"
     return f"Встреча {hhmm}"
 
 

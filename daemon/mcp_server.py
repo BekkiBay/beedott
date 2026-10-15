@@ -45,6 +45,13 @@ _SOURCE = {"summary": "саммари", "transcript": "расшифровка"}
 _ACTIVE_JOBS = ("pending", "queued", "running")  # как RuntimeLogic.activeJobs
 
 
+def _title(s: dict) -> str:
+    """display_title — демон текущей версии; старый демон мог его не писать
+    (совместимость со старой БД/протоколом) — тогда title, а дальше заглушка,
+    как в db.session_title."""
+    return s.get("display_title") or s.get("title") or "Без названия"
+
+
 def _when(iso: str | None) -> str:
     return to_local(iso).strftime("%d.%m.%Y %H:%M") if iso else "дата неизвестна"
 
@@ -65,10 +72,13 @@ def format_meeting_list(sessions: list[dict]) -> str:
     lines = []
     for s in sessions:
         tasks = f", задач: {s['action_items']}" if s.get("action_items") else ""
-        status = _STATUS.get(s['status'], s['status'])
-        if s.get("status") == "error" and s.get("error"):
-            status += f": {_trim_error(s['error'])}"
-        lines.append(f"- **{s['display_title']}** — {_when(s['started_at'])}, "
+        if s.get("state") in ("DETECTED", "RECORDING"):
+            status = "идёт запись"
+        else:
+            status = _STATUS.get(s['status'], s['status'])
+            if s.get("status") == "error" and s.get("error"):
+                status += f": {_trim_error(s['error'])}"
+        lines.append(f"- **{_title(s)}** — {_when(s['started_at'])}, "
                      f"{_minutes(s.get('duration_min'))}, "
                      f"{status}{tasks} · id `{s['id']}`")
     return "\n".join(lines)
@@ -90,10 +100,11 @@ def format_search(query: str, results: list[dict], sessions: list[dict], limit: 
     lines = []
     for sid, hits in ordered[:limit]:
         s = by_id.get(sid)
-        title = s["display_title"] if s else (hits[0].get("title") or "Без названия")
+        title = _title(s) if s else (hits[0].get("title") or "Без названия")
         lines.append(f"### {title} — {_when(s['started_at'] if s else None)} · id `{sid}`")
         for hit in hits:
-            snippet = hit["snippet"].replace("[[", "**").replace("]]", "**")
+            # Перевод строки в сниппете ломает Markdown-список — на пробел.
+            snippet = hit["snippet"].replace("\n", " ").replace("[[", "**").replace("]]", "**")
             lines.append(f"- {_SOURCE.get(hit['source'], hit['source'])}: {snippet}")
     if total > limit:
         lines.append(f"(показаны {limit} из {total} встреч — уточни запрос или увеличь limit)")
@@ -127,6 +138,8 @@ def _state_text(detail: dict) -> str:
         return "ошибка" + (f": {_trim_error(errors[0])}" if errors else "")
     if state in ("DETECTED", "RECORDING"):
         return "идёт запись"
+    if state == "CANCELLED":
+        return "отменена"
     return "обрабатывается"
 
 
@@ -196,7 +209,7 @@ def format_meeting(detail: dict, *, include_transcript: bool = False,
     s = detail["session"]
     minutes = _session_minutes(s)
     duration = f"{minutes} мин" if minutes is not None else "длительность неизвестна"
-    lines = [f"# {s['display_title']}",
+    lines = [f"# {_title(s)}",
              f"{_when(s['started_at'])} · {duration} · {_state_text(detail)} · id `{s['id']}`"]
     names = _attendees(s)
     if names:
@@ -221,7 +234,7 @@ def format_action_items(rows: list[tuple[dict, dict]], days: int) -> str:
         tasks = followup.get("action_items") or []
         if not tasks:
             continue
-        out.append(f"### {s['display_title']} — {_when(s['started_at'])} · id `{s['id']}`")
+        out.append(f"### {_title(s)} — {_when(s['started_at'])} · id `{s['id']}`")
         out += [_task_line(t) for t in tasks]
     return "\n".join(out) if out else f"За последние {days} дн. задач нет."
 
