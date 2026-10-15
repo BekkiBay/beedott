@@ -1,15 +1,13 @@
-"""Notifier / notify(): экранирование AppleScript-строк (SPEC_v3 §10, PLAN_v3
+"""notify(): экранирование AppleScript-строк (SPEC_v3 §10, PLAN_v3
 Task 2.3). Баг v2: title/message подставлялись в f-строку без экранирования —
 кавычка внутри названия встречи ломала osascript-скрипт. Здесь subprocess
 мокается (реальный osascript не запускается), проверяем ИМЕННО итоговую
 строку скрипта, переданную в subprocess.run.
 """
 import subprocess
-from datetime import datetime
 
 from daemon import notifier
-from daemon.notifier import Notifier, _escape_applescript, notify
-from daemon.session import Session
+from daemon.notifier import _escape_applescript, notify
 
 
 def _fake_run_factory(calls, returncode=0, stdout=""):
@@ -105,66 +103,6 @@ def test_notify_returns_false_on_timeout(monkeypatch):
 
     monkeypatch.setattr(notifier.subprocess, "run", fake_run)
     assert notify("T", "M") is False
-
-
-# -------------------------------------------------- Notifier (Session) ---
-
-def _session(title: str) -> Session:
-    return Session(title=title, start_time=datetime(2026, 7, 13, 15, 0))
-
-
-def test_notify_recording_started_escapes_title(monkeypatch):
-    calls = []
-    monkeypatch.setattr(notifier.subprocess, "run", _fake_run_factory(calls))
-
-    Notifier.notify_recording_started(_session('1:1 "Bekzod" \\ sync'))
-
-    script = calls[0][0][2]
-    assert '\\"Bekzod\\"' in script
-    assert '\\\\ sync' in script
-    assert '"1:1 "Bekzod"' not in script  # неэкранированная кавычка не просочилась
-
-
-def test_notify_done_includes_escaped_title_and_subtitle(monkeypatch):
-    calls = []
-    monkeypatch.setattr(notifier.subprocess, "run", _fake_run_factory(calls))
-
-    Notifier.notify_done(_session('Демо "релиза"'))
-
-    script = calls[0][0][2]
-    assert '\\"релиза\\"' in script
-    assert 'subtitle "Отправлено в Telegram"' in script
-
-
-def test_notify_upcoming_escapes_dialog_title_and_accepts_go(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        notifier.subprocess, "run",
-        _fake_run_factory(calls, returncode=0, stdout="button returned:ГО"),
-    )
-    monkeypatch.setattr(Notifier, "_open_meet_url", staticmethod(lambda url: None))
-
-    session = _session('Sync "weekly" review')
-    result = Notifier.notify_upcoming(session)
-
-    assert result is True
-    script = calls[0][0][2]
-    assert '\\"weekly\\"' in script
-    assert '"Sync "weekly" review' not in script
-
-
-def test_notify_upcoming_returns_false_when_cancelled(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        notifier.subprocess, "run",
-        _fake_run_factory(calls, returncode=0, stdout="button returned:ОТМЕН"),
-    )
-
-    session = _session("Sync")
-    result = Notifier.notify_upcoming(session)
-
-    assert result is False
-    assert session.status == "cancelled"
 
 
 # ───── продукт P16: пока приложение опрашивает демон, уведомления — через него ─

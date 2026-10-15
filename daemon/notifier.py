@@ -18,8 +18,6 @@ import time
 from collections import deque
 from typing import Optional
 
-from daemon.session import Session
-
 logger = logging.getLogger(__name__)
 
 
@@ -67,8 +65,8 @@ def notify(title: str, message: str, subtitle: Optional[str] = None, *,
     какую встречу открыть по клику), иначе через osascript.
 
     Общая точка входа для всех предохранителей (duration-limit/disk-guard/
-    silence) и для Notifier-методов ниже — единственное место, где строится
-    osascript-скрипт, поэтому единственное место, где нужно экранировать.
+    silence) — единственное место, где строится osascript-скрипт, поэтому
+    единственное место, где нужно экранировать.
 
     Возвращает True при успешной постановке в очередь / вызове osascript,
     False при ошибке/таймауте.
@@ -100,110 +98,3 @@ def notify(title: str, message: str, subtitle: Optional[str] = None, *,
         logger.error(f"Ошибка при отправке уведомления: {e}")
         return False
 
-
-class Notifier:
-    """Уведомления, завязанные на Session (диалоги встреч, статусы)."""
-
-    @staticmethod
-    def notify_upcoming(session: Session) -> bool:
-        """
-        Показать уведомление о предстоящей встрече
-
-        Args:
-            session: Объект сессии
-
-        Returns:
-            True если нажато "ГО", False если "ОТМЕН"
-        """
-        start_time = session.start_time.strftime('%H:%M')
-        title = session.title[:50]  # Обрезаем длинные названия
-        body = _escape_applescript(f"Встреча '{title}' начинается в {start_time}")
-
-        # AppleScript для диалога с двумя кнопками
-        script = f"""
-        display dialog "{body}" \\
-            buttons {{"ГО", "ОТМЕН"}} \\
-            default button 1 \\
-            with icon caution
-        """
-
-        try:
-            result = subprocess.run(
-                ['osascript', '-e', script],
-                capture_output=True,
-                text=True,
-                timeout=60  # Максимум 60 секунд ожидания ответа
-            )
-
-            if result.returncode == 0:
-                # Проверяем нажатую кнопку
-                if 'ГО' in result.stdout:
-                    logger.info(f'Пользователь нажал ГО для встречи {session.title}')
-                    Notifier._open_meet_url(session.meet_url)
-                    return True
-                else:
-                    logger.info(f'Пользователь отменил встречу {session.title}')
-                    session.status = 'cancelled'
-                    return False
-            else:
-                logger.warning('Диалог был закрыт или произошла ошибка')
-                return False
-
-        except subprocess.TimeoutExpired:
-            logger.warning('Таймаут при ожидании ответа на уведомление')
-            return False
-        except Exception as e:
-            logger.error(f'Ошибка при показе уведомления: {e}')
-            return False
-
-    @staticmethod
-    def _open_meet_url(meet_url: str):
-        """
-        Открыть URL встречи в браузере
-
-        Args:
-            meet_url: URL встречи
-        """
-        if not meet_url:
-            logger.warning('URL встречи не доступен')
-            return
-
-        try:
-            subprocess.run(['open', meet_url], check=True)
-            logger.info(f'Открыт URL встречи: {meet_url}')
-        except Exception as e:
-            logger.error(f'Ошибка при открытии URL: {e}')
-
-    @staticmethod
-    def notify_recording_started(session: Session):
-        """
-        Показать простое уведомление о начале записи
-
-        Args:
-            session: Объект сессии
-        """
-        notify(title="BeeDott", message=f"Запись встречи '{session.title}' началась")
-
-    @staticmethod
-    def notify_processing(session: Session):
-        """
-        Показать уведомление о обработке встречи
-
-        Args:
-            session: Объект сессии
-        """
-        notify(title="BeeDott", message=f"Обработка встречи '{session.title}'...")
-
-    @staticmethod
-    def notify_done(session: Session):
-        """
-        Показать уведомление об завершении
-
-        Args:
-            session: Объект сессии
-        """
-        notify(
-            title="BeeDott",
-            message=f"Фоллоу-ап готов для '{session.title}'",
-            subtitle="Отправлено в Telegram",
-        )
