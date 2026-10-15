@@ -213,16 +213,19 @@ C — уборка. Серьёзность: 🔴 критично, 🟠 высо
 
 ## Уборка
 
-- [ ] C1 Мёртвые настройки в `config.py`/`.env` (`USE_OLLAMA`, `USE_ANTHROPIC`,
-  `WHISPER_MODEL`, `ENABLE_*_SINK`, триггеры, порты и т.д.).
-- [ ] C2 Notion-синк не подключён — подключить или удалить.
-- [ ] C3 Документация v2 (`README.md`, `QUICKSTART.md`, `SETUP.md`, `STARTUP.md`,
+- [x] C1 Мёртвые настройки в `config.py`/`.env` (`USE_OLLAMA`, `USE_ANTHROPIC`,
+  `WHISPER_MODEL`, `ENABLE_*_SINK`, триггеры, порты и т.д.). (удалены из
+  `config.py` и `.env.example`; pytest)
+- [x] C2 Notion-синк не подключён — подключить или удалить. (удалён)
+- [x] C3 Документация v2 (`README.md`, `QUICKSTART.md`, `SETUP.md`, `STARTUP.md`,
   `STRUCTURE.md`, `meetmind_architecture.md`, `SPEC_v2.md`, `tray.py`) → один README v3.
-- [ ] C4 Мусор в корне: `last_vstrechka.m4a`, скриншот, `meetmind.log`, `sessions/`,
-  `test_output/`.
+  (старые файлы удалены, README переписан)
+- [x] C4 Мусор в корне: `last_vstrechka.m4a`, скриншот, `meetmind.log`, `sessions/`,
+  `test_output/`. (скриншот удалён из git, остальное — в Корзину)
 - [ ] C5 Обновить SPEC под решение про Claude-фоллбек; отметить чекбоксы M3–M4
   в PLAN.
-- [ ] C6 Решить судьбу дизайна Firefox-расширения (в спеке это Won't).
+- [x] C6 Решить судьбу дизайна Firefox-расширения (в спеке это Won't). (удалён:
+  автодетект Meet сделан в приложении без расширения)
 
 ## Открытые решения
 
@@ -280,3 +283,14 @@ C — уборка. Серьёзность: 🔴 критично, 🟠 высо
   followup_instructions.md в папке приложения, читается на каждом саммари;
   формат JSON добавляется кодом). Стандартная инструкция теперь идёт после
   транскрипта целиком; качество сверено на 3 прошлых встречах.
+- 2026-10-15 — уборка репозитория (C1–C4, C6). Удалён мёртвый код v2:
+  `tray.py`, `daemon/process_watcher.py`, `daemon/storage.py`,
+  `daemon/sinks/notion.py`, `daemon/session.py` и класс `Notifier` с
+  диалогами встреч (вызывались только тестами). Из `config.py` и
+  `.env.example` убраны неиспользуемые настройки; `config` больше не создаёт
+  пустую `sessions/` в текущей папке. Удалены документация v1/v2,
+  `requirements.txt`, `setup_mac.sh`, `test_one_meeting.sh`, дизайн
+  Firefox-расширения, скриншот и бинарники спайков; README переписан под v3.
+  Локальный мусор вне git (`last_vstrechka.m4a`, `test_output/`, `sessions/`,
+  `web/`) — в Корзине, папка `meetmind-cleanup-2026-10-15`. Тесты: 289 → 285
+  (удалены 4 теста удалённого `Notifier`), все зелёные.
