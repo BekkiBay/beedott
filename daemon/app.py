@@ -16,7 +16,7 @@ from pathlib import Path
 
 import soundfile as sf
 
-from daemon import db, notifier, reconcile, retention
+from daemon import db, followup_edit, notifier, reconcile, retention
 from daemon.app_guard import AppRecordingGuard
 from daemon.control import ControlError, ControlServer
 from daemon.notifier import notify
@@ -405,15 +405,7 @@ class DaemonApp:
         # Доставки сбрасываются — прогресс Telegram тоже, иначе побайтно тот же
         # текст «уже отправлен» и сообщение не придёт. Первое старое сообщение
         # запоминаем: новая версия уйдёт ответом на него (продукт P12).
-        sdir = session_dir(sid)
-        progress = sdir / "telegram_progress.json"
-        try:
-            sent = json.loads(progress.read_text(encoding="utf-8")).get("sent") or []
-        except (OSError, json.JSONDecodeError):
-            sent = []
-        if sent:
-            (sdir / "telegram_reply_to").write_text(str(sent[0]), encoding="utf-8")
-        progress.unlink(missing_ok=True)
+        followup_edit.prepare_telegram_resend(session_dir(sid))
         db.resummarize(self._con, sid)
         return {"session_id": sid,
                 "state": db.get_session(self._con, sid)["state"]}
