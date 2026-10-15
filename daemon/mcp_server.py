@@ -13,6 +13,7 @@ stdout — канал протокола MCP: print() здесь ломает п
 import functools
 import json
 import math
+import time
 from datetime import datetime, timedelta, timezone
 
 from mcp.server.mcpserver import MCPServer
@@ -31,6 +32,11 @@ TRANSCRIPT_LIMIT = 40_000
 # «Все встречи» для поиска и задач: дефолт демона (200) обрезал бы окно.
 ALL_SESSIONS = 10_000
 
+# Старт и стоп записи: приложение видит флаг демона при опросе status (раз в
+# 3 с); ждём дольше срока флага (8 с) — ответ не соврёт.
+WAIT_SEC = 12
+POLL_SEC = 0.5
+
 READ = ToolAnnotations(read_only_hint=True)
 EDIT = ToolAnnotations(read_only_hint=False, destructive_hint=False)
 DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True)
@@ -45,7 +51,9 @@ INSTRUCTIONS = (
     "то, о чём просили; resend=true — только если пользователь просил отправить в "
     "Telegram. Удаляй встречу только по явной просьбе, с её точным названием; если "
     "delete_meeting ответит, что название не совпало — переспроси пользователя, не "
-    "повторяй удаление с названием из этой ошибки."
+    "повторяй удаление с названием из этой ошибки. Запись: start_recording и "
+    "stop_recording — только по просьбе пользователя; import_audio импортирует "
+    "аудиофайл с этого Mac."
 )
 
 server = MCPServer(name="beedott", instructions=INSTRUCTIONS)
@@ -461,6 +469,61 @@ def delete_meeting(meeting_id: str, title: str) -> str:
                         "Переспроси пользователя, не удаляй по названию из этой ошибки.")
     _call("delete_session", {"session_id": meeting_id, "title": title})
     return f"Встреча «{title}» удалена. Заметки в ~/MeetMind и сообщения в Telegram остались."
+
+
+@server.tool(annotations=EDIT, structured_output=False)
+@tool_errors
+def start_recording(title: str | None = None) -> str:
+    """Начать запись звонка в BeeDott (пишет приложение: звук компьютера и
+    микрофон). title — название встречи; без него BeeDott возьмёт его из
+    Календаря. Ответ — когда запись реально началась."""
+    _call("request_start", {"title": title} if title else {})
+    deadline = time.monotonic() + WAIT_SEC
+    while True:
+        st = _call("status")
+        if st.get("recording"):
+            title_now = st.get("recording_display_title") or "Без названия"
+            return f"Запись началась: **{title_now}** · id `{st['recording']}`."
+        if time.monotonic() >= deadline:
+            raise ToolError("BeeDott не начал запись за 12 с — приложение не запущено "
+                            "или занято; проверь recording_status")
+        time.sleep(POLL_SEC)
+
+
+@server.tool(annotations=EDIT, structured_output=False)
+@tool_errors
+def stop_recording() -> str:
+    """Остановить текущую запись; встреча уйдёт в обработку, фоллоу-ап будет
+    через несколько минут."""
+    sid = _call("status").get("recording")
+    if not sid:
+        raise ToolError("Запись не идёт.")
+    _call("request_stop")
+    deadline = time.monotonic() + WAIT_SEC
+    while _call("status").get("recording") == sid:
+        if time.monotonic() >= deadline:
+            raise ToolError("Запись ещё останавливается — проверь recording_status")
+        time.sleep(POLL_SEC)
+    # Пустую или случайную короткую запись демон отменяет (CANCELLED), а
+    # отменённых нет в sessions_list. session_detail не годится: он создаёт
+    # каталог сессии заново (paths.session_dir).
+    listed = _call("sessions_list", {"limit": 20})["sessions"]
+    if not any(s["id"] == sid for s in listed):
+        return "Запись была пустой или слишком короткой — BeeDott её отменил."
+    return (f"Запись остановлена, встреча ушла в обработку · id `{sid}`. "
+            "Фоллоу-ап будет через несколько минут.")
+
+
+@server.tool(annotations=EDIT, structured_output=False)
+@tool_errors
+def import_audio(path: str, title: str | None = None) -> str:
+    """Импортировать аудиофайл с этого Mac (m4a, mp3, wav…) как встречу: он
+    пройдёт расшифровку и фоллоу-ап. path — полный путь к файлу."""
+    params = {"path": path}
+    if title:
+        params["title"] = title
+    r = _call("import_audio", params)
+    return f"Импортирую — встреча появится в Библиотеке и пройдёт обработку · id `{r['session_id']}`."
 
 
 def main() -> None:

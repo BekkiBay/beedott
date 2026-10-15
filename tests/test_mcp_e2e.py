@@ -79,7 +79,7 @@ def test_client_lists_tools_and_searches(appdir):
     assert {t.name for t in listed.tools} == {
         "list_meetings", "search_meetings", "get_meeting", "action_items", "recording_status",
         "rename_meeting", "resummarize_meeting", "update_followup", "set_keep_audio",
-        "delete_meeting"}
+        "delete_meeting", "start_recording", "stop_recording", "import_audio"}
     assert not found.is_error
     assert "### Синк — 14.10.2026 10:00" in found.content[0].text
     assert "**отчёт**" in found.content[0].text

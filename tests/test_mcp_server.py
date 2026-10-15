@@ -511,3 +511,88 @@ def test_delete_with_wrong_title_is_readable(daemon):
     with pytest.raises(ToolError, match="называется «Синк»"):
         mcp_server.delete_meeting("aaa111", "Ретро")
     assert not any(c[0] == "delete_session" for c in daemon.calls)
+
+
+CONTROL_TOOLS = {"start_recording", "stop_recording", "import_audio"}
+
+
+@pytest.fixture()
+def fast(monkeypatch):
+    monkeypatch.setattr(mcp_server, "POLL_SEC", 0)
+    monkeypatch.setattr(mcp_server, "WAIT_SEC", 0.05)
+
+
+def statuses(*items):
+    it = iter(items)
+    last = {}
+
+    def handler(params):
+        nonlocal last
+        last = next(it, last)
+        return last
+    return handler
+
+
+def test_control_tool_annotations():
+    found = tools()
+    for name in CONTROL_TOOLS:
+        a = found[name].annotations
+        assert (a.read_only_hint, a.destructive_hint) == (False, False), name
+
+
+def test_start_recording_waits_for_app(daemon, fast):
+    daemon.handlers["request_start"] = {"requested": True}
+    daemon.handlers["status"] = statuses(
+        {"recording": None},
+        {"recording": "ccc333", "recording_display_title": "Синк"})
+    out = mcp_server.start_recording("Синк")
+    assert out == "Запись началась: **Синк** · id `ccc333`."
+    assert daemon.calls[0] == ("request_start", {"title": "Синк"})
+
+
+def test_start_recording_timeout(daemon, fast):
+    daemon.handlers["request_start"] = {"requested": True}
+    daemon.handlers["status"] = {"recording": None}
+    with pytest.raises(ToolError, match="не начал запись"):
+        mcp_server.start_recording()
+    assert daemon.calls[0] == ("request_start", {})
+
+
+def test_start_recording_busy(daemon, fast):
+    daemon.handlers["request_start"] = control.DaemonError("busy", "уже идёт запись")
+    with pytest.raises(ToolError, match="уже идёт запись"):
+        mcp_server.start_recording()
+
+
+def test_stop_recording_processed(daemon, fast):
+    daemon.handlers["status"] = statuses({"recording": "ccc333"}, {"recording": "ccc333"},
+                                         {"recording": None})
+    daemon.handlers["request_stop"] = {"session_id": "ccc333", "requested": True}
+    daemon.handlers["sessions_list"] = {"sessions": [dict(SESSIONS[0], id="ccc333")]}
+    assert "ушла в обработку" in mcp_server.stop_recording()
+
+
+def test_stop_recording_cancelled_empty(daemon, fast):
+    daemon.handlers["status"] = statuses({"recording": "ccc333"}, {"recording": None})
+    daemon.handlers["request_stop"] = {"session_id": "ccc333", "requested": True}
+    daemon.handlers["sessions_list"] = {"sessions": SESSIONS}
+    assert "отменил" in mcp_server.stop_recording()
+
+
+def test_stop_recording_nothing_to_stop(daemon, fast):
+    daemon.handlers["status"] = {"recording": None}
+    with pytest.raises(ToolError, match="Запись не идёт"):
+        mcp_server.stop_recording()
+
+
+def test_stop_recording_timeout(daemon, fast):
+    daemon.handlers["status"] = {"recording": "ccc333"}
+    daemon.handlers["request_stop"] = {"session_id": "ccc333", "requested": True}
+    with pytest.raises(ToolError, match="ещё останавливается"):
+        mcp_server.stop_recording()
+
+
+def test_import_audio(daemon):
+    daemon.handlers["import_audio"] = {"session_id": "ddd444"}
+    assert "ddd444" in mcp_server.import_audio("/tmp/call.m4a", "Звонок")
+    assert daemon.calls == [("import_audio", {"path": "/tmp/call.m4a", "title": "Звонок"})]
