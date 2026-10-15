@@ -16,6 +16,15 @@ EDITED = dict(GOOD, action_items=[{"task": "Собрать отчёт", "owner":
 EMPTY = {"context": "", "discussed": [], "decisions": [], "action_items": [], "open_questions": []}
 
 
+@pytest.fixture(autouse=True)
+def _telegram_off(monkeypatch):
+    """По умолчанию Telegram не настроен: config при импорте читает настоящий
+    config.env пользователя, и статус «telegram» зависел бы от машины.
+    Тесты, которым он нужен, включают его через _telegram_configured."""
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+
+
 @pytest.fixture()
 def con(tmp_path, monkeypatch):
     monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
