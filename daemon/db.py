@@ -184,6 +184,31 @@ def resummarize(con, sid: str) -> None:
     con.commit()
 
 
+def redeliver(con, sid: str) -> None:
+    """Правка фоллоу-апа (daemon/followup_edit.py): заново прогнать только
+    deliver. Одна транзакция (вызывающий может добавить свои UPDATE до неё —
+    они уйдут тем же commit): состояние → SUMMARIZED; job deliver → queued со
+    сброшенными попытками — enqueue_job их не сбрасывает, и после FAILED на
+    deliver (attempts=8) первая же неудача стала бы окончательной. Упавшая
+    пересборка (job summarize failed, а прежний followup.json есть) → done:
+    фоллоу-ап теперь есть, карточка не должна показывать шаг упавшим."""
+    row = get_session(con, sid)
+    assert_transition(State(row["state"]), State.SUMMARIZED)
+    ts = now()
+    con.execute("UPDATE sessions SET state=?, updated_at=? WHERE id=?",
+                (State.SUMMARIZED, ts, sid))
+    con.execute(
+        "INSERT INTO pipeline_jobs(session_id, stage, chain, updated_at) VALUES(?, 'deliver', 1, ?)"
+        " ON CONFLICT(session_id, stage) DO UPDATE SET status='queued', attempts=0,"
+        " next_retry_at=NULL, last_error=NULL, updated_at=excluded.updated_at",
+        (sid, ts))
+    con.execute(
+        "UPDATE pipeline_jobs SET status='done', last_error=NULL, updated_at=?"
+        " WHERE session_id=? AND stage='summarize' AND status IN ('failed', 'failed_retry')",
+        (ts, sid))
+    con.commit()
+
+
 # ─── notes_fts: полнотекстовый поиск по встречам (экран 05) ──────────────────
 # Writer-дисциплина (SPEC_v3 §3): notes_fts пишет только стадия summarize
 # (index_note) — один writer, как у остальных таблиц.

@@ -87,3 +87,40 @@ def test_search_notes_orders_by_relevance_not_insertion(tmp_path, monkeypatch):
     hits = db.search_notes(con, "отчёт", limit=1)
     assert len(hits) == 1
     assert hits[0]["session_id"] == strong_sid
+
+
+def test_redeliver_resets_deliver_job_in_one_go(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = db.create_session(con, source="manual", title="Синк")
+    for st in (State.RECORDING, State.RECORDED, State.TRANSCRIBING, State.TRANSCRIBED,
+               State.SUMMARIZING, State.FAILED):
+        db.set_state(con, sid, st)
+    for stage in ("transcribe", "summarize", "deliver"):
+        db.enqueue_job(con, sid, stage)
+    con.execute("UPDATE pipeline_jobs SET status='done' WHERE session_id=? AND stage='transcribe'", (sid,))
+    con.execute("UPDATE pipeline_jobs SET status='failed', attempts=8, last_error='x'"
+                " WHERE session_id=? AND stage IN ('summarize', 'deliver')", (sid,))
+    con.commit()
+
+    db.redeliver(con, sid)
+
+    assert db.get_session(con, sid)["state"] == State.SUMMARIZED
+    jobs = {r["stage"]: r for r in con.execute(
+        "SELECT * FROM pipeline_jobs WHERE session_id=?", (sid,))}
+    assert (jobs["deliver"]["status"], jobs["deliver"]["attempts"],
+            jobs["deliver"]["last_error"], jobs["deliver"]["next_retry_at"]) == ("queued", 0, None, None)
+    assert (jobs["summarize"]["status"], jobs["summarize"]["last_error"]) == ("done", None)
+
+
+def test_redeliver_inserts_missing_deliver_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", str(tmp_path))
+    con = db.connect()
+    sid = db.create_session(con, source="manual")
+    for st in (State.RECORDING, State.RECORDED, State.TRANSCRIBING, State.TRANSCRIBED,
+               State.SUMMARIZING, State.SUMMARIZED, State.DELIVERING, State.DELIVERED):
+        db.set_state(con, sid, st)
+    db.redeliver(con, sid)
+    row = con.execute("SELECT status FROM pipeline_jobs WHERE session_id=? AND stage='deliver'",
+                      (sid,)).fetchone()
+    assert row["status"] == "queued"

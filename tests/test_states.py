@@ -35,3 +35,9 @@ def test_reprocess_from_failed_allowed():
         assert_transition(State.FAILED, target)
     with pytest.raises(ValueError):
         assert_transition(State.FAILED, State.DELIVERED)  # напрямую в конец нельзя
+
+
+def test_followup_edit_redelivers_from_delivered():
+    """Правка фоллоу-апа из Claude (daemon/followup_edit.py) заново прогоняет
+    только deliver."""
+    assert_transition(State.DELIVERED, State.SUMMARIZED)

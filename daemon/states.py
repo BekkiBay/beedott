@@ -30,6 +30,9 @@ ALLOWED[State.FAILED] = {State.RECORDED, State.TRANSCRIBED, State.SUMMARIZED}
 # перегоняются заново. Аудио к этому моменту могло быть удалено retention —
 # не мешает, транскрипция не перегоняется.
 ALLOWED[State.DELIVERED] = {State.TRANSCRIBED}
+# Правка фоллоу-апа из Claude (daemon/followup_edit.py, db.redeliver): новая
+# ревизия уже записана — заново прогоняется только deliver.
+ALLOWED[State.DELIVERED].add(State.SUMMARIZED)
 
 
 def assert_transition(a: State, b: State) -> None:
