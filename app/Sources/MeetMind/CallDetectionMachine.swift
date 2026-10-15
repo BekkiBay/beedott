@@ -73,7 +73,15 @@ struct CallDetectionMachine {
         inputSince = audio.input ? (inputSince ?? now) : nil
 
         if isRecording {
-            guard autoRecording else { return .none }  // ручную запись не трогаем
+            guard autoRecording else {
+                // Ручную запись (в т.ч. по просьбе Claude или из островка) не
+                // трогаем, но пока идёт звонок (микрофон браузера активен) —
+                // считаем его обработанным: иначе сразу после стопа этой
+                // записи следующий step поймает тот же звонок как новый и
+                // запустит автозапись заново (аудит фазы 3).
+                if audio.input { handledThisCall = true }
+                return .none
+            }
             if let q = quietSince, now.timeIntervalSince(q) >= endQuiet { return finishAuto() }
             if let l = inputLostAt, now.timeIntervalSince(l) >= endNoInput { return finishAuto() }
             return .none

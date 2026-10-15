@@ -349,4 +349,22 @@ do {
     check(RuntimeLogic.startRequest([:]) == nil, "старый демон без поля")
 }
 
+// 27. Ручная (или по просьбе Claude/из островка) запись во время звонка в
+//     браузере: после её стопа тот же звонок не запускает автозапись заново;
+//     новый звонок (после тишины ≥ endQuiet) снова ловится как обычно.
+do {
+    var m = CallDetectionMachine()
+    _ = m.step(talking, now: at(0), isRecording: true, calendarHasMeet: true)
+    _ = m.step(talking, now: at(50), isRecording: true, calendarHasMeet: true)
+    check(m.step(talking, now: at(51), isRecording: false, calendarHasMeet: true) == .none,
+          "ручную запись остановили — тот же звонок, не автостартуем")
+    check(m.step(talking, now: at(60), isRecording: false, calendarHasMeet: true) == .none,
+          "звонок всё ещё идёт — молчим")
+    _ = m.step(silent, now: at(100), isRecording: false, calendarHasMeet: true)
+    _ = m.step(silent, now: at(161), isRecording: false, calendarHasMeet: true)  // звонок кончился
+    _ = m.step(talking, now: at(300), isRecording: false, calendarHasMeet: true)
+    check(m.step(talking, now: at(309), isRecording: false, calendarHasMeet: true) == .autoStart,
+          "новый звонок — автостарт снова работает")
+}
+
 if failures == 0 { print("OK — все тесты прошли") } else { print("\(failures) провалено"); exit(1) }

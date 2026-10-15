@@ -319,6 +319,14 @@ final class AppModel: ObservableObject {
                         // размер WAV) — аудит T7 — или Claude (MCP, причина "mcp").
                         NSLog("MeetMind: демон просит остановить запись (%@)", reason)
                         try? self.performStopRecording()
+                        if reason == "mcp" {
+                            // Предохранители демона уведомляют сами (notify →
+                            // notifications_pop выше) — здесь только причина "mcp".
+                            NotificationManager.shared.postLocal(
+                                title: "Запись остановлена по просьбе Claude",
+                                message: "Фоллоу-ап придёт через несколько минут.",
+                                sessionId: sid)
+                        }
                         recording = nil
                     }
                 } else if ownerKnown, let engine = self.capture.engine,
@@ -337,8 +345,13 @@ final class AppModel: ObservableObject {
                 if recording == nil, self.capture.engine == nil,
                    let request = RuntimeLogic.startRequest(result) {
                     do {
-                        recording = try self.performStartRecording(source: "mcp", title: request.title)
+                        let sid = try self.performStartRecording(source: "mcp", title: request.title)
+                        recording = sid
                         NSLog("MeetMind: запись по просьбе Claude началась")
+                        NotificationManager.shared.postLocal(
+                            title: "Запись началась по просьбе Claude",
+                            message: "«\(request.title ?? "Встреча")» — остановить ⌘⇧R",
+                            sessionId: sid)
                     } catch {
                         NSLog("MeetMind: запись по просьбе Claude не началась (%@)",
                               error.localizedDescription)
