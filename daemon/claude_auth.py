@@ -24,7 +24,9 @@ AUTH_STATUS_TIMEOUT_S = 30
 _BILLING_OVERRIDE_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 # Homebrew ставит claude сюда, а урезанный PATH демона (см. docstring claude_bin)
-# их не видит — проверяем перед nvm/~/.local.
+# их не видит — добавляем в поиск. На машине с несколькими установками summarizer
+# должен продолжать брать тот же бинарник, что и раньше (~/.local/bin, ~/.claude/local,
+# nvm) — поэтому Homebrew/usr-local проверяем последними, не первыми.
 _HOMEBREW_BIN = Path("/opt/homebrew/bin/claude")
 _USR_LOCAL_BIN = Path("/usr/local/bin/claude")
 
@@ -43,8 +45,8 @@ def claude_bin() -> str | None:
         return found
     home = Path.home()
     nvm = sorted(home.glob(".nvm/versions/node/*/bin/claude"), key=_node_version, reverse=True)
-    for path in [_HOMEBREW_BIN, _USR_LOCAL_BIN, home / ".local/bin/claude",
-                 home / ".claude/local/claude", *nvm]:
+    for path in [home / ".local/bin/claude", home / ".claude/local/claude", *nvm,
+                 _HOMEBREW_BIN, _USR_LOCAL_BIN]:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     return None

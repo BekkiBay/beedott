@@ -62,9 +62,9 @@ def test_claude_bin_finds_native_installer_location(monkeypatch, tmp_path):
 
 
 def test_claude_bin_finds_homebrew_install(monkeypatch, tmp_path):
-    """Homebrew ставит claude в /opt/homebrew/bin — мимо PATH демона и мимо
-    nvm/~/.local; проверяем раньше них (подставляем путь через monkeypatch,
-    не трогая реальный /opt/homebrew)."""
+    """Homebrew ставит claude в /opt/homebrew/bin — мимо PATH демона; как
+    последнее средство, если нет ни ~/.local/bin, ни ~/.claude/local, ни nvm
+    (подставляем путь через monkeypatch, не трогая реальный /opt/homebrew)."""
     monkeypatch.delenv("MEETMIND_CLAUDE_BIN", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     brew = _fake_bin(tmp_path / "homebrew-bin" / "claude")
@@ -81,6 +81,19 @@ def test_claude_bin_finds_usr_local_install(monkeypatch, tmp_path):
     monkeypatch.setattr(claude_auth, "_USR_LOCAL_BIN", usr_local)
     with patch("daemon.claude_auth.shutil.which", return_value=None):
         assert claude_auth.claude_bin() == str(usr_local)
+
+
+def test_claude_bin_prefers_local_install_over_homebrew(monkeypatch, tmp_path):
+    """На машине с несколькими установками summarizer должен продолжать
+    брать тот же бинарник, что и раньше: ~/.local/bin раньше Homebrew, а не
+    наоборот — иначе смена приоритета молча переключила бы версию claude."""
+    monkeypatch.delenv("MEETMIND_CLAUDE_BIN", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    native = _fake_bin(tmp_path / ".local" / "bin" / "claude")
+    brew = _fake_bin(tmp_path / "homebrew-bin" / "claude")
+    monkeypatch.setattr(claude_auth, "_HOMEBREW_BIN", brew)
+    with patch("daemon.claude_auth.shutil.which", return_value=None):
+        assert claude_auth.claude_bin() == str(native)
 
 
 # ─────────────────────────────── claude_env ──────────────────────────────────

@@ -62,3 +62,10 @@ def test_error_reply_is_daemon_error_with_code(server):
 def test_timeout_is_daemon_unavailable(server):
     with pytest.raises(DaemonUnavailable):
         request("slow", timeout=0.1)
+
+
+def test_large_payload_roundtrips(server):
+    # ~100 KB — update_followup с длинной расшифровкой в контексте; дефолтный
+    # лимит StreamReader (64 KiB) рвал бы такой запрос на limit exceeded.
+    big = "x" * 100_000
+    assert request("echo", {"text": big}) == {"got": {"text": big}}

@@ -210,8 +210,9 @@ def redeliver(con, sid: str) -> None:
 
 
 # ─── notes_fts: полнотекстовый поиск по встречам (экран 05) ──────────────────
-# Writer-дисциплина (SPEC_v3 §3): notes_fts пишет только стадия summarize
-# (index_note) — один writer, как у остальных таблиц.
+# notes_fts пишут: стадия summarize (index_note — первая сборка), MCP-правка
+# followup_edit.apply (та же index_note — переиндексация после правки) и
+# DaemonApp.rename_session (только колонка title, без переиндексации).
 
 
 def index_note(con, sid: str, *, title: str, transcript: str, summary: str) -> None:

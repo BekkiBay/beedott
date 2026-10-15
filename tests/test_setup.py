@@ -12,7 +12,7 @@ import pytest
 
 # config при первом импорте делает load_dotenv(репо/.env) — импортируем до
 # фикстур, иначе он вернёт в os.environ ключи, которые фикстура удалила.
-import config  # noqa: F401
+import config
 from daemon import setup, summarizer
 
 

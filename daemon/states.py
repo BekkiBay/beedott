@@ -20,18 +20,20 @@ for s in State:
         ALLOWED.setdefault(s, set()).update({State.CANCELLED, State.FAILED})
         ALLOWED[s].add(s)  # ретрай этапа = повторный вход в то же состояние
 
-# /reprocess: единственный выход из FAILED — откат к состоянию перед
-# самой ранней непройденной стадией (transcribe→RECORDED, summarize→TRANSCRIBED,
+# /reprocess — обычный выход из FAILED: откат к состоянию перед самой ранней
+# непройденной стадией (transcribe→RECORDED, summarize→TRANSCRIBED,
 # deliver→SUMMARIZED). Джобы этой стадии сбрасываются в queued (см. db.reprocess).
+# Правка фоллоу-апа из Claude тоже может вывести FAILED — всегда в SUMMARIZED,
+# тем же db.redeliver, что и из DELIVERED ниже.
 ALLOWED[State.FAILED] = {State.RECORDED, State.TRANSCRIBED, State.SUMMARIZED}
 
-# «Пересобрать саммари» (экран 06, db.resummarize): единственный выход из
-# DELIVERED — откат к TRANSCRIBED, транскрипт остаётся, summarize+deliver
+# «Пересобрать саммари» (экран 06, db.resummarize) — один из двух выходов из
+# DELIVERED: откат к TRANSCRIBED, транскрипт остаётся, summarize+deliver
 # перегоняются заново. Аудио к этому моменту могло быть удалено retention —
 # не мешает, транскрипция не перегоняется.
 ALLOWED[State.DELIVERED] = {State.TRANSCRIBED}
-# Правка фоллоу-апа из Claude (daemon/followup_edit.py, db.redeliver): новая
-# ревизия уже записана — заново прогоняется только deliver.
+# Второй выход из DELIVERED — правка фоллоу-апа из Claude (daemon/followup_edit.py,
+# db.redeliver): новая ревизия уже записана — заново прогоняется только deliver.
 ALLOWED[State.DELIVERED].add(State.SUMMARIZED)
 
 

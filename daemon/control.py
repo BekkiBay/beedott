@@ -72,7 +72,11 @@ class ControlServer:
     async def _serve(self) -> None:
         sp = socket_path()
         sp.unlink(missing_ok=True)
-        server = await asyncio.start_unix_server(self._on_client, path=str(sp))
+        # Дефолтный лимит StreamReader (64 KiB) мал для update_followup с
+        # длинной расшифровкой в контексте — readline() рвался на limit
+        # exceeded раньше, чем запрос дочитывался. 1 МБ хватает с запасом,
+        # остальное отрезаем явной ошибкой в _on_client.
+        server = await asyncio.start_unix_server(self._on_client, path=str(sp), limit=1 << 20)
         sp.chmod(0o600)
         self._started.set()
         logger.info("control socket: %s", sp)
@@ -109,6 +113,17 @@ class ControlServer:
                     await writer.drain()
         except (ConnectionResetError, BrokenPipeError):
             pass
+        except ValueError:
+            # readline() упёрся в limit (строка длиннее 1 МБ без \n) — не
+            # пытаемся дочитать остаток, сообщаем клиенту и рвём соединение.
+            try:
+                writer.write((json.dumps(
+                    {"id": None, "error": {"code": "too_large",
+                                           "message": "запрос больше 1 МБ"}},
+                    ensure_ascii=False) + "\n").encode())
+                await writer.drain()
+            except (ConnectionResetError, BrokenPipeError):
+                pass
         finally:
             self._clients.discard(writer)
             writer.close()
