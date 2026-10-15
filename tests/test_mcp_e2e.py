@@ -43,7 +43,9 @@ def run(appdir: str, scenario):
                 await session.initialize()
                 return await scenario(session)
 
-    return asyncio.run(main())
+    # Сервер, который стартовал, но молчит, иначе подвесил бы весь pytest:
+    # плагина тайм-аутов в проекте нет.
+    return asyncio.run(asyncio.wait_for(main(), timeout=30))
 
 
 def test_client_lists_tools_and_searches(appdir):
