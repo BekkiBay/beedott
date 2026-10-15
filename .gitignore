@@ -41,3 +41,6 @@ app/build/
 .DS_Store
 .AppleDouble
 .LSOverride
+
+# git worktrees (superpowers)
+.worktrees/
