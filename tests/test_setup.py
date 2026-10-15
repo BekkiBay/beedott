@@ -1,7 +1,10 @@
 """daemon/setup.py — команды мастера первичной настройки (JSON-строки в stdout)."""
 import io
 import json
+import os
 import re
+import shlex
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,7 +40,8 @@ def write_config(appdir, text):
 def test_status_clean_mac(appdir, capsys):
     assert setup.main(["status"]) == 0
     assert events(capsys) == [{"event": "ok", "model": True, "summary": None, "telegram": False,
-                               "summary_model": "claude-opus-5-5", "summary_custom": False}]
+                               "summary_model": "claude-opus-5-5", "summary_custom": False,
+                               "claude": None}]
 
 
 def test_status_api_key(appdir, capsys):
@@ -439,3 +443,105 @@ def test_summary_models_match_swift():
     ids = set(re.findall(r'id: "(claude-[a-z0-9-]+)"', swift.read_text(encoding="utf-8")))
     assert ids == set(setup.SUMMARY_MODELS)
     assert config.DEFAULT_ANTHROPIC_MODEL in setup.SUMMARY_MODELS
+
+
+# ───── MCP: подключение к Claude Desktop ──────────────────────────────────────
+
+
+def desktop_config() -> Path:
+    return Path(os.environ["MEETMIND_CLAUDE_DESKTOP_CONFIG"])
+
+
+def write_desktop(data) -> Path:
+    path = desktop_config()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(data if isinstance(data, str) else json.dumps(data))
+    return path
+
+
+def test_claude_connect_creates_config(appdir, capsys):
+    assert setup.main(["claude-connect"]) == 0
+    path = desktop_config()
+    assert events(capsys)[-1] == {"event": "ok", "config": str(path)}
+    entry = json.loads(path.read_text())["mcpServers"]["beedott"]
+    assert entry == setup.mcp_launch()
+    assert entry["command"] == sys.executable
+    assert entry["args"] == ["-m", "daemon.mcp_server"]
+    assert (Path(entry["env"]["PYTHONPATH"]) / "daemon" / "mcp_server.py").exists()
+
+
+def test_claude_connect_keeps_other_settings_and_backs_up(appdir, capsys):
+    path = write_desktop({"preferences": {"x": 1}, "mcpServers": {"trino": {"command": "t"}}})
+    setup.main(["claude-connect"])
+    data = json.loads(path.read_text())
+    assert data["preferences"] == {"x": 1}
+    assert data["mcpServers"]["trino"] == {"command": "t"}
+    assert "beedott" in data["mcpServers"]
+    backup = json.loads(path.with_name(path.name + ".beedott.bak").read_text())
+    assert backup["mcpServers"] == {"trino": {"command": "t"}}
+
+
+def test_claude_connect_is_idempotent(appdir, capsys):
+    setup.main(["claude-connect"])
+    first = desktop_config().read_text()
+    setup.main(["claude-connect"])
+    assert desktop_config().read_text() == first
+
+
+def test_claude_connect_empty_file_is_empty_config(appdir, capsys):
+    path = write_desktop("")
+    assert setup.main(["claude-connect"]) == 0
+    assert "beedott" in json.loads(path.read_text())["mcpServers"]
+
+
+def test_claude_connect_keeps_symlink(appdir, capsys, tmp_path):
+    real = tmp_path / "real-config.json"
+    real.write_text("{}")
+    path = desktop_config()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(real)
+    setup.main(["claude-connect"])
+    assert path.is_symlink()
+    assert "beedott" in json.loads(real.read_text())["mcpServers"]
+
+
+@pytest.mark.parametrize("raw", ["{oops", "[1, 2]", '{"mcpServers": []}'])
+def test_claude_connect_bad_config_untouched(appdir, capsys, raw):
+    path = write_desktop(raw)
+    assert setup.main(["claude-connect"]) == 1
+    assert events(capsys)[-1]["code"] == "bad_config"
+    assert path.read_text() == raw
+
+
+def test_claude_disconnect_removes_only_beedott(appdir, capsys):
+    path = write_desktop({"mcpServers": {"trino": {"command": "t"}}})
+    setup.main(["claude-connect"])
+    assert setup.main(["claude-disconnect"]) == 0
+    assert json.loads(path.read_text())["mcpServers"] == {"trino": {"command": "t"}}
+
+
+def test_claude_disconnect_without_file_is_ok(appdir, capsys):
+    assert setup.main(["claude-disconnect"]) == 0
+    assert not desktop_config().exists()
+
+
+def test_status_claude_states(appdir, capsys):
+    def claude():
+        setup.main(["status"])
+        return events(capsys)[-1]["claude"]
+
+    assert claude() is None
+    setup.main(["claude-connect"])
+    assert claude() == "connected"
+    path = desktop_config()
+    data = json.loads(path.read_text())
+    data["mcpServers"]["beedott"]["command"] = "/old/python"
+    path.write_text(json.dumps(data))
+    assert claude() == "stale"
+    path.write_text("{oops")
+    assert claude() == "bad_config"
+
+
+def test_launch_env_carries_pycache_prefix(appdir, monkeypatch):
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", "/tmp/pyc")
+    assert setup.mcp_launch()["env"]["PYTHONPYCACHEPREFIX"] == "/tmp/pyc"

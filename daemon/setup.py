@@ -10,6 +10,7 @@
 Код выхода: 0 — ok, 1 — error, 2 — неизвестная команда. Секреты (ключ
 Anthropic, токен бота) приходят только через stdin — argv виден в `ps`.
 Тексты для человека рисует Swift по коду ошибки.
+Команды claude-* подключают MCP-сервер BeeDott к Claude (спек 2026-10-14-claude-mcp-design.md).
 """
 import errno
 import json
@@ -36,6 +37,11 @@ MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
 SUMMARY_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1")
 MAX_INSTRUCTIONS = 20_000
 WEIGHT_FILES = ("weights.safetensors", "weights.npz")
+
+# MCP-сервер BeeDott в конфигах Claude (спек 2026-10-14-claude-mcp-design.md).
+CLAUDE_SERVER_NAME = "beedott"
+DESKTOP_CONFIG = (Path.home() / "Library" / "Application Support" / "Claude"
+                  / "claude_desktop_config.json")
 
 _NETWORK_ERRORS = {"ConnectionError", "TransportError", "ConnectError", "TimeoutException",
                    "ConnectTimeout", "ReadTimeout", "LocalEntryNotFoundError",
@@ -157,7 +163,8 @@ def cmd_status() -> dict:
     from daemon import summarizer
     return {"model": model_cached(), "summary": summary, "telegram": telegram,
             "summary_model": _summary_model(),
-            "summary_custom": summarizer.custom_instructions() is not None}
+            "summary_custom": summarizer.custom_instructions() is not None,
+            "claude": claude_desktop_state()}
 
 
 def _summary_model() -> str:
@@ -198,6 +205,100 @@ def cmd_set_instructions(text: str) -> dict:
     tmp.write_text(text + "\n", encoding="utf-8")
     os.replace(tmp, path)
     return {"custom": True}
+
+
+# ─── MCP: Claude Desktop ──────────────────────────────────────────────────────
+
+
+def desktop_config_path() -> Path:
+    return Path(os.environ.get("MEETMIND_CLAUDE_DESKTOP_CONFIG") or DESKTOP_CONFIG)
+
+
+def mcp_launch() -> dict:
+    """Как Claude запускает MCP-сервер BeeDott: этот же Python, пакет daemon — по
+    PYTHONPATH (у коллег — Resources/backend в .app, у автора — репо). Одна
+    функция для status и подключения — сравнивают одно и то же.
+    PYTHONPYCACHEPREFIX обязателен у коллег: иначе __pycache__ ляжет в .app и
+    сломает подпись."""
+    import daemon
+    env = {"PYTHONPATH": str(Path(daemon.__file__).resolve().parent.parent)}
+    for key in ("PYTHONPYCACHEPREFIX", "MEETMIND_APPDIR"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    return {"command": sys.executable, "args": ["-m", "daemon.mcp_server"], "env": env}
+
+
+def _read_desktop_config(path: Path) -> dict:
+    """{} — файла нет или он пустой. bad_config — не JSON-объект или
+    mcpServers не объект. Прочие OSError (нет прав) — наружу."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except ValueError as exc:  # UnicodeDecodeError
+        raise SetupError("bad_config", f"{path}: {exc}") from exc
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise SetupError("bad_config", f"{path}: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+        raise SetupError("bad_config", f"{path}: неожиданная структура")
+    return data
+
+
+def _write_desktop_config(path: Path, data: dict) -> None:
+    """Копия в .beedott.bak, затем временный файл + os.replace. Симлинк
+    остаётся симлинком — пишем в файл, на который он указывает."""
+    target = path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        shutil.copy2(target, target.with_name(target.name + ".beedott.bak"))
+    tmp = target.with_name(target.name + ".beedott.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, target)
+
+
+def cmd_claude_connect() -> dict:
+    """Записать mcpServers.beedott; preferences, чужие серверы и прочее — как
+    есть. Пишется только при закрытом Claude Desktop (мастер закрывает его сам):
+    открытый Claude при выходе перезаписал бы файл своей копией."""
+    path = desktop_config_path()
+    data = _read_desktop_config(path)
+    servers = dict(data.get("mcpServers") or {})
+    servers[CLAUDE_SERVER_NAME] = mcp_launch()
+    data["mcpServers"] = servers
+    _write_desktop_config(path, data)
+    return {"config": str(path)}
+
+
+def cmd_claude_disconnect() -> dict:
+    path = desktop_config_path()
+    data = _read_desktop_config(path)
+    servers = data.get("mcpServers")
+    if isinstance(servers, dict) and CLAUDE_SERVER_NAME in servers:
+        data["mcpServers"] = {k: v for k, v in servers.items() if k != CLAUDE_SERVER_NAME}
+        _write_desktop_config(path, data)
+    return {"config": str(path)}
+
+
+def claude_desktop_state() -> str | None:
+    """connected — ключ есть и command/args/env совпадают с mcp_launch();
+    stale — ключ есть, команда другая; bad_config — файл не читается; None — нет
+    ключа или файла. Никогда не бросает: упавший status мастер счёл бы
+    «нужна настройка»."""
+    try:
+        data = _read_desktop_config(desktop_config_path())
+    except (OSError, ValueError, SetupError):
+        return "bad_config"
+    entry = (data.get("mcpServers") or {}).get(CLAUDE_SERVER_NAME)
+    if entry is None:
+        return None
+    want = mcp_launch()
+    if isinstance(entry, dict) and all(entry.get(k) == want[k] for k in ("command", "args", "env")):
+        return "connected"
+    return "stale"
 
 
 def _classify(exc: BaseException) -> str:
@@ -318,6 +419,8 @@ COMMANDS = {
     "summary-settings": cmd_summary_settings,
     "set-model": cmd_set_model,
     "set-instructions": cmd_set_instructions,
+    "claude-connect": cmd_claude_connect,
+    "claude-disconnect": cmd_claude_disconnect,
 }
 # Команды, которым нужен секрет из stdin (первая строка).
 SECRET_COMMANDS = {"check-key", "telegram-check", "telegram-connect"}
