@@ -367,11 +367,17 @@ def cmd_claude_code_connect() -> dict:
 
 
 def cmd_claude_code_disconnect() -> dict:
+    """Неудача remove — не всегда ошибка: если beedott и не был
+    зарегистрирован, желаемое состояние (не зарегистрирован) уже достигнуто.
+    Проверяем через `mcp get`: нашёлся — реально "failed", не нашёлся —
+    считаем "removed"."""
     binp = _claude_cli()
     if not binp:
         return {"claude_code": "absent"}
-    ok = _claude_run(binp, "mcp", "remove", "--scope", "user", CLAUDE_SERVER_NAME)
-    return {"claude_code": "removed" if ok else "failed"}
+    if _claude_run(binp, "mcp", "remove", "--scope", "user", CLAUDE_SERVER_NAME):
+        return {"claude_code": "removed"}
+    still_registered = _claude_run(binp, "mcp", "get", CLAUDE_SERVER_NAME)
+    return {"claude_code": "failed" if still_registered else "removed"}
 
 
 def _classify(exc: BaseException) -> str:

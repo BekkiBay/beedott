@@ -619,14 +619,19 @@ def test_status_claude_state_never_raises(appdir, capsys, monkeypatch):
 
 
 def fake_claude(tmp_path, monkeypatch, exit_code=0) -> Path:
-    """Фейковый claude CLI: пишет argv в файл, выходит с exit_code."""
+    """Фейковый claude CLI: пишет argv в файл, выходит с exit_code. exit_code —
+    либо число (одно и то же для всех вызовов), либо dict {argv[1:3]: код} с
+    кодом по умолчанию 0 для не перечисленных подкоманд."""
     log = tmp_path / "claude-argv.jsonl"
     script = tmp_path / "claude"
+    codes = exit_code if isinstance(exit_code, dict) else {}
+    default = exit_code if isinstance(exit_code, int) else 0
     script.write_text(
         f"#!{sys.executable}\n"
         "import json, sys\n"
         f"open({str(log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        f"sys.exit({exit_code})\n")
+        f"codes = {codes!r}\n"
+        f"sys.exit(codes.get(tuple(sys.argv[1:3]), {default}))\n")
     script.chmod(0o755)
     from daemon import claude_auth
     monkeypatch.setattr(claude_auth, "claude_bin", lambda: str(script))
@@ -672,3 +677,19 @@ def test_claude_code_disconnect(appdir, capsys, monkeypatch, tmp_path):
 def test_claude_code_disconnect_without_cli(appdir, capsys):
     setup.main(["claude-code-disconnect"])
     assert events(capsys)[-1] == {"event": "ok", "claude_code": "absent"}
+
+
+def test_claude_code_disconnect_recovers_when_already_absent(appdir, capsys, monkeypatch, tmp_path):
+    """remove падает, потому что beedott и не был зарегистрирован — желаемое
+    состояние (не зарегистрирован) уже достигнуто, проверяем через `mcp get`."""
+    log = fake_claude(tmp_path, monkeypatch, exit_code={("mcp", "remove"): 1, ("mcp", "get"): 1})
+    assert setup.main(["claude-code-disconnect"]) == 0
+    assert events(capsys)[-1] == {"event": "ok", "claude_code": "removed"}
+    assert claude_calls(log) == [["mcp", "remove", "--scope", "user", "beedott"],
+                                 ["mcp", "get", "beedott"]]
+
+
+def test_claude_code_disconnect_fails_when_still_registered(appdir, capsys, monkeypatch, tmp_path):
+    fake_claude(tmp_path, monkeypatch, exit_code={("mcp", "remove"): 1, ("mcp", "get"): 0})
+    assert setup.main(["claude-code-disconnect"]) == 0
+    assert events(capsys)[-1]["claude_code"] == "failed"
