@@ -8,6 +8,8 @@ APP="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/build/BeeDott.app}"
 RES="$APP/Contents/Resources"
 WORK="$(mktemp -d)"
 export MEETMIND_APPDIR="$WORK/app"
+# status не должен читать настоящий конфиг Claude Desktop пользователя.
+export MEETMIND_CLAUDE_DESKTOP_CONFIG="$WORK/claude_desktop_config.json"
 R="$MEETMIND_APPDIR/runtime"
 # Как у RuntimeManager: байткод — в runtime/, исходники — из бандла.
 export PYTHONPATH="$RES/backend" PYTHONPYCACHEPREFIX="$R/pycache"

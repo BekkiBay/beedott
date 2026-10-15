@@ -1,4 +1,5 @@
 """Тесты control-сокета: сервер в потоке, синхронный клиент."""
+import shutil
 import tempfile
 import time
 
@@ -24,7 +25,8 @@ def server(monkeypatch):
         "slow": lambda params: time.sleep(0.5) or {},
     })
     srv.start()
-    return srv
+    yield srv
+    shutil.rmtree(short_dir, ignore_errors=True)
 
 
 def test_roundtrip(server):

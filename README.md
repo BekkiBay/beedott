@@ -89,6 +89,7 @@ Python-демон (main.py → daemon/)
 | `daemon/render.py`, `daemon/sinks/` | Markdown фоллоу-апа и доставка: Telegram, заметка, Obsidian |
 | `daemon/recorder.py` | Запасная запись из Python (sounddevice), если пишет не приложение |
 | `daemon/setup.py` | Команды мастера первичной настройки (`python -m daemon.setup`) |
+| `daemon/mcp_server.py` | MCP-сервер для Claude: список, поиск, карточка, задачи, статус; через control.sock |
 | `daemon/reconcile.py`, `daemon/retention.py` | Восстановление после краша, удаление старого аудио |
 
 Демоном можно управлять из терминала: `uv run python -m daemon.cli

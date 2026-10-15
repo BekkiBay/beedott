@@ -2,6 +2,7 @@
 клиент из пакета mcp (stdio), демон — ControlServer с фейковыми хендлерами на
 сокете во временной папке приложения."""
 import asyncio
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -27,14 +28,15 @@ def appdir(monkeypatch):
         "search": lambda p: {"results": [{"session_id": "aaa111", "title": "Синк",
                                           "source": "summary", "snippet": "про [[отчёт]]"}]},
     }).start()
-    return d
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def run(appdir: str, scenario):
     # stdio_client передаёт ребёнку только HOME, LOGNAME, PATH, SHELL, TERM, USER —
     # PYTHONPATH и MEETMIND_APPDIR явно.
     params = StdioServerParameters(
-        command=sys.executable, args=["-m", "daemon.mcp_server"], cwd="/",
+        command=sys.executable, args=["-P", "-m", "daemon.mcp_server"], cwd="/",
         env={"PYTHONPATH": str(REPO), "MEETMIND_APPDIR": appdir, "MEETMIND_TZ": "Asia/Tashkent"})
 
     async def main():
