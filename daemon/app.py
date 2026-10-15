@@ -38,6 +38,10 @@ _TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 GUARD_INTERVAL_SEC = 5
 MAINTENANCE_INTERVAL_SEC = 3600
 GAP_NOTE_APP_GONE = "[запись прервана: приложение перестало писать звук]"
+# Запрос записи от Claude (MCP) живёт столько, сколько приложению нужно, чтобы
+# его увидеть (опрос status раз в 3 с) и начать; позже не сработает. MCP ждёт
+# дольше (12 с) — если приложение начало в последний момент, ответ не соврёт.
+START_REQUEST_TTL_SEC = 8
 _STOP_REASON_HUMAN = {
     "duration_limit": "превышен лимит длительности",
     "disk_full": "мало места на диске",
@@ -80,6 +84,8 @@ class DaemonApp:
         self._owner: str | None = None  # "daemon" | "app" — кто пишет audio.wav активной сессии
         self._guard: AppRecordingGuard | None = None  # предохранители owner=app
         self._stop_request: str | None = None  # причина авто-стопа для Swift
+        self._start_request: dict | None = None  # запрос записи от Claude (MCP)
+        self._clock = time.monotonic  # тесты подменяют
         self._tls = threading.local()  # sqlite-подключение на поток
         # Фоновая работа (импорт аудио); тесты подменяют на синхронный вызов.
         self._run_async = lambda fn, *args: threading.Thread(
@@ -101,6 +107,9 @@ class DaemonApp:
         attendees = [a.strip() for a in raw_attendees if isinstance(a, str) and a.strip()][:50] \
             if isinstance(raw_attendees, list) else []
         with self._lock:
+            # Запрос Claude отработан при любом исходе — неудачный старт не
+            # повторяется на следующем опросе.
+            self._start_request = None
             if self._active_sid is not None:
                 raise ControlError("busy", f"уже идёт запись сессии {self._active_sid}")
             owner = params.get("audio_path_owner") or "daemon"
@@ -178,6 +187,31 @@ class DaemonApp:
                 return {"session_id": sid}
         notify("BeeDott", _cancel_message(cancelled), session_id=sid)
         return {"session_id": sid, "cancelled": cancelled}
+
+    def request_start(self, params: dict) -> dict:
+        """Claude (MCP) просит начать запись. Пишет приложение (Process Tap и
+        микрофон, права TCC), не демон: флаг уходит в status, приложение при
+        опросе запускает запись как по ⌘⇧R. Флаг живёт START_REQUEST_TTL_SEC."""
+        title = (params.get("title") or "").strip()[:200] or None
+        with self._lock:
+            if self._active_sid is not None:
+                raise ControlError("busy", "уже идёт запись")
+            self._start_request = {"title": title,
+                                   "expires": self._clock() + START_REQUEST_TTL_SEC}
+        return {"requested": True}
+
+    def request_stop(self, params: dict) -> dict:
+        """Claude (MCP) просит остановить запись. Пишет приложение — флаг
+        stop_requested (как у предохранителей), приложение останавливает движок
+        и само зовёт stop_recording. Пишет демон — останавливаем сразу."""
+        with self._lock:
+            if self._active_sid is None:
+                raise ControlError("no_active_session", "нет активной записи")
+            if self._owner == "app":
+                if self._stop_request is None:
+                    self._stop_request = "mcp"
+                return {"session_id": self._active_sid, "requested": True}
+        return self.stop_recording({})
 
     def _close_recording(self, sid: str, gap_note: str | None = None) -> str | None:
         """Под self._lock. Закрыть запись: проверить файл (незакрытый заголовок
@@ -259,12 +293,18 @@ class DaemonApp:
             if rec is not None:
                 rec_title, rec_started = rec["title"], rec["started_at"]
                 rec_display = db.session_title(rec)
+        with self._lock:
+            req = self._start_request
+            if req is not None and req["expires"] <= self._clock():
+                self._start_request = req = None
+        start_requested = {"title": req["title"]} if req is not None else None
         return {
             "recording": self._active_sid,
             # owner=app: Swift сверяет со своим движком (осиротевшая запись →
             # stop_recording), stop_requested — сигнал предохранителя (T3, T7).
             "recording_owner": self._owner,
             "stop_requested": self._stop_request,
+            "start_requested": start_requested,
             "recording_title": rec_title,
             "recording_display_title": rec_display,
             "recording_started_at": rec_started,
@@ -646,6 +686,8 @@ class DaemonApp:
             "start_recording": self.start_recording,
             "stop_recording": self.stop_recording,
             "cancel_recording": self.cancel_recording,
+            "request_start": self.request_start,
+            "request_stop": self.request_stop,
             "status": self.status,
             "reprocess": self.reprocess,
             "sessions_list": self.sessions_list,
