@@ -101,7 +101,7 @@ def apply(con, sid: str, followup, *, resend: bool) -> dict:
     path = sdir / "followup.json"
     prev = revisions.previous(sdir)
     revision = revisions.next_revision(prev)
-    prev_engine = prev.get("engine")
+    prev_engine = (prev or {}).get("engine")  # файл проверен в _check_editable, но вдруг удалён
     engine = prev_engine if isinstance(prev_engine, str) and prev_engine else "claude"
     new = dict(clean, engine=engine, revision=revision)
     title = db.session_title(row)
