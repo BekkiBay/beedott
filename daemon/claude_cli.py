@@ -1,6 +1,6 @@
 """Саммари через claude CLI headless (`claude -p`, биллинг = Max-подписка, SPEC D15).
 
-Паттерн вызова — из test_one_meeting.sh:184-189: --print --model …
+Паттерн вызова (проверен первым прототипом пайплайна): --print --model …
 --append-system-prompt … --output-format text, промпт в stdin. БЕЗ --bare
 (не читает CLAUDE_CODE_OAUTH_TOKEN). Любой сбой — исключение с причиной:
 оркестратор переводит стадию в failed_retry, причина видна в last_error.
