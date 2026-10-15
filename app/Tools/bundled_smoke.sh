@@ -26,6 +26,8 @@ setup() {
 echo "== link-ffmpeg";   setup link-ffmpeg
 "$R/bin/ffmpeg" -hide_banner -version | head -1
 echo "== status";        setup status
+echo "== MCP-сервер импортируется с cwd /"
+(cd / && "$R/venv/bin/python" -c "import daemon.mcp_server")
 echo "== install-model"; setup install-model | tail -2
 
 echo "== демон"

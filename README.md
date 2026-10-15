@@ -51,6 +51,17 @@ app/Tools/app_icon.sh          # перерисовать иконку, пото
 Мастер настройки работает через `api`; `claude_cli` — для запуска из репо по
 Max-подписке (`npm install -g @anthropic-ai/claude-code` → `claude login`).
 
+## Встречи в Claude (MCP)
+
+BeeDott — MCP-сервер для Claude Desktop и Claude Code: `python -m
+daemon.mcp_server` (stdio), ходит в демон через `control.sock`, данные не
+покидают Mac, пока Claude сам их не запросит. Подключение — «Настройка…» → шаг
+«Claude» (пишет `mcpServers.beedott` в конфиг Claude Desktop и выполняет
+`claude mcp add-json --scope user beedott …`). Вручную для Claude Code — та же
+команда из шага мастера («Команда для Claude Code»). Инструменты:
+`list_meetings`, `search_meetings`, `get_meeting`, `action_items`,
+`recording_status`. Спек: `docs/superpowers/specs/2026-10-14-claude-mcp-design.md`.
+
 ---
 
 ## Как устроено
