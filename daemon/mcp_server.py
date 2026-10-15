@@ -49,11 +49,15 @@ INSTRUCTIONS = (
     "Править встречи можно только по просьбе пользователя. Перед update_followup "
     "прочитай встречу через get_meeting и пришли фоллоу-ап целиком, изменив только "
     "то, о чём просили; resend=true — только если пользователь просил отправить в "
-    "Telegram. Удаляй встречу только по явной просьбе, с её точным названием; если "
-    "delete_meeting ответит, что название не совпало — переспроси пользователя, не "
-    "повторяй удаление с названием из этой ошибки. Запись и импорт — только по "
-    "явной просьбе пользователя: start_recording и stop_recording управляют "
-    "записью; import_audio импортирует аудиофайл с этого Mac."
+    "Telegram. resummarize_meeting заменяет фоллоу-ап целиком, включая ручные "
+    "правки (прежняя версия сохранится в папке встречи), и отправит новую версию "
+    "в Telegram, если он подключён — вызывай только по явной просьбе пользователя "
+    "и предупреди его заранее. Удаляй встречу только по явной просьбе, с её точным "
+    "названием; если delete_meeting ответит, что название не совпало — переспроси "
+    "пользователя, не повторяй удаление с названием из этой ошибки. Запись и "
+    "импорт — только по явной просьбе пользователя: start_recording и "
+    "stop_recording управляют записью; import_audio импортирует аудиофайл с "
+    "этого Mac."
 )
 
 server = MCPServer(name="beedott", instructions=INSTRUCTIONS)
@@ -65,8 +69,8 @@ _ACTIVE_JOBS = ("pending", "queued", "running")  # как RuntimeLogic.activeJob
 
 def _title(s: dict) -> str:
     """display_title — демон текущей версии; старый демон мог его не писать
-    (совместимость со старой БД/протоколом) — тогда title, а дальше заглушка,
-    как в db.session_title."""
+    (совместимость со старой БД/протоколом) — тогда title, а если и его нет —
+    просто «Без названия» (не «Встреча ЧЧ:ММ», как у db.session_title)."""
     return s.get("display_title") or s.get("title") or "Без названия"
 
 
@@ -268,7 +272,7 @@ def format_status(st: dict, now: datetime | None = None) -> str:
         if started:
             minutes = max(0, round((now - to_local(started)).total_seconds() / 60))
             since = f" с {to_local(started).strftime('%H:%M')} ({minutes} мин)"
-        title = st.get("recording_display_title") or "Без названия"
+        title = st.get("recording_display_title") or st.get("recording_title") or "Без названия"
         lines.append(f"Идёт запись **{title}**{since} · id `{st['recording']}`")
     else:
         lines.append("Запись не идёт.")
@@ -305,7 +309,10 @@ def tool_errors(fn):
                             "BeeDott и повтори") from exc
         except control.DaemonError as exc:
             if exc.code == "not_found":
-                raise ToolError(f"Встреча не найдена ({exc.message}) — возьми id из "
+                # Демон говорит «нет сессии» (свои термины) — пользователю Claude
+                # показывает «встречи».
+                message = exc.message.replace("нет сессии", "нет встречи")
+                raise ToolError(f"Встреча не найдена ({message}) — возьми id из "
                                 "list_meetings или search_meetings") from exc
             if exc.code == "unknown_method":
                 # Старый демон не знает метод — обычно после обновления BeeDott
@@ -414,7 +421,10 @@ def rename_meeting(meeting_id: str, title: str) -> str:
 @tool_errors
 def resummarize_meeting(meeting_id: str) -> str:
     """Заново собрать фоллоу-ап встречи через Claude из той же расшифровки —
-    как кнопка «Пересобрать саммари» в карточке."""
+    как кнопка «Пересобрать саммари» в карточке. Заменяет фоллоу-ап целиком, в
+    том числе ручные правки — прежняя версия сохранится в папке встречи — и
+    отправляет новую версию в Telegram, если он подключён. Только по явной
+    просьбе пользователя — предупреди его заранее."""
     _call("resummarize", {"session_id": meeting_id})
     return ("Пересобираю фоллоу-ап — новая версия появится в Библиотеке через пару "
             "минут и, если подключён Telegram, придёт туда ответом на прежнюю.")
@@ -460,8 +470,8 @@ def delete_meeting(meeting_id: str, title: str) -> str:
     """Удалить встречу навсегда: аудио, расшифровку, фоллоу-ап и поиск. Заметки
     в ~/MeetMind и сообщения в Telegram останутся. Только по явной просьбе
     пользователя. title — точное название встречи из list_meetings или
-    get_meeting: если не совпадёт, ничего не удалится — если название не
-    совпало, переспроси пользователя, не повторяй с названием из ошибки."""
+    get_meeting: если не совпадёт, ничего не удалится — переспроси пользователя,
+    не повторяй удаление с названием из этой ошибки."""
     detail = _call("session_detail", {"session_id": meeting_id})
     actual = _title(detail["session"])
     if actual.strip() != title.strip():
@@ -482,7 +492,7 @@ def start_recording(title: str | None = None) -> str:
     while True:
         st = _call("status")
         if st.get("recording"):
-            title_now = st.get("recording_display_title") or "Без названия"
+            title_now = st.get("recording_display_title") or st.get("recording_title") or "Без названия"
             return f"Запись началась: **{title_now}** · id `{st['recording']}`."
         if time.monotonic() >= deadline:
             raise ToolError("BeeDott не начал запись за 12 с — приложение не запущено "
@@ -500,7 +510,6 @@ def stop_recording() -> str:
         raise ToolError("Запись не идёт.")
     _call("request_stop")
     deadline = time.monotonic() + WAIT_SEC
-    status = {}
     while True:
         status = _call("status")
         if status.get("recording") != sid:

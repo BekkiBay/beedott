@@ -309,6 +309,13 @@ def test_action_items_and_status_formatting():
         "Запись не идёт.\nОчередь обработки пуста."
 
 
+def test_format_status_falls_back_to_recording_title_without_display_title():
+    """Старый демон (до display_title, аудит T3/T7) шлёт только recording_title."""
+    st = {"recording": "ccc333", "recording_title": "Синк", "queue": [], "sessions": {}}
+    out = mcp_server.format_status(st)
+    assert "Идёт запись **Синк**" in out
+
+
 def test_status_recording_clock_drift_clamped_to_zero():
     """recording_started_at чуть в будущем относительно now (расхождение
     часов) — минуты не должны уходить в минус."""
@@ -548,6 +555,15 @@ def test_start_recording_waits_for_app(daemon, fast):
     out = mcp_server.start_recording("Синк")
     assert out == "Запись началась: **Синк** · id `ccc333`."
     assert daemon.calls[0] == ("request_start", {"title": "Синк"})
+
+
+def test_start_recording_falls_back_to_recording_title_without_display_title(daemon, fast):
+    daemon.handlers["request_start"] = {"requested": True}
+    daemon.handlers["status"] = statuses(
+        {"recording": None},
+        {"recording": "ccc333", "recording_title": "Синк"})
+    out = mcp_server.start_recording("Синк")
+    assert out == "Запись началась: **Синк** · id `ccc333`."
 
 
 def test_start_recording_timeout(daemon, fast):
