@@ -91,3 +91,45 @@ def test_request_stop_without_recording(app):
     with pytest.raises(ControlError) as exc:
         app.request_stop({})
     assert exc.value.code == "no_active_session"
+
+
+@pytest.fixture()
+def notes(monkeypatch):
+    sent = []
+    monkeypatch.setattr("daemon.app.notify", lambda title, msg, *a, **k: sent.append(msg))
+    return sent
+
+
+def test_request_stop_owner_daemon_notifies_user(app, monkeypatch, notes):
+    """owner=daemon — Swift не следит за stop_requested (это только для
+    owner=app), так что без уведомления здесь пользователь не узнал бы,
+    что запись остановил именно Claude."""
+    monkeypatch.setattr("daemon.app.Recorder", _FakeRecorder)
+    sid = app.start_recording({"audio_path_owner": "daemon"})["session_id"]
+
+    result = app.request_stop({})
+
+    assert result == {"session_id": sid}
+    assert any("просьбе Claude" in m for m in notes)
+
+
+def test_request_stop_owner_daemon_cancelled_recording_skips_mcp_notice(app, monkeypatch, notes):
+    """Слишком короткая запись — stop_recording её отменяет и уже уведомляет
+    об этом сам; «остановлена по просьбе Claude» здесь было бы неправдой."""
+    monkeypatch.setenv("MEETMIND_MIN_RECORDING_SEC", "10")
+    monkeypatch.setattr("daemon.app.Recorder", _FakeRecorder)
+    sid = app.start_recording({"audio_path_owner": "daemon"})["session_id"]
+
+    result = app.request_stop({})
+
+    assert result == {"session_id": sid, "cancelled": "too_short"}
+    assert not any("просьбе Claude" in m for m in notes)
+    assert any("короче 10" in m for m in notes)
+
+
+def test_request_stop_owner_app_does_not_notify_here(app, notes):
+    """owner=app — приложение само зовёт stop_recording и само уведомляет
+    (MeetMindApp.swift); демон здесь только поднимает флаг."""
+    app.start_recording({"audio_path_owner": "app"})
+    app.request_stop({})
+    assert notes == []

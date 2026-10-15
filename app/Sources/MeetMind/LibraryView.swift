@@ -144,8 +144,15 @@ final class LibraryModel: ObservableObject {
     func resummarize() {
         guard let sid = selected?.session.id else { return }
         Task { [weak self] in
-            try? await ControlClient.background {
-                try ControlClient.resummarize(sid)
+            do {
+                try await ControlClient.background {
+                    try ControlClient.resummarize(sid)
+                }
+            } catch {
+                NotificationManager.shared.postLocal(
+                    title: "Пересобрать не получилось",
+                    message: ControlClientError.userMessage(error),
+                    sessionId: sid)
             }
             if self?.selected?.session.id == sid { self?.reloadSelected() }
         }

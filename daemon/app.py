@@ -205,18 +205,25 @@ class DaemonApp:
 
     def request_stop(self, params: dict) -> dict:
         """Claude (MCP) просит остановить запись. Пишет приложение — флаг
-        stop_requested (как у предохранителей), приложение останавливает движок
-        и само зовёт stop_recording. Пишет демон — останавливаем сразу."""
+        stop_requested (как у предохранителей), приложение останавливает движок,
+        само зовёт stop_recording и само уведомляет (MeetMindApp.swift знает
+        причину "mcp"). Пишет демон — останавливаем сразу здесь же и уведомляем
+        сами: для owner=daemon Swift о просьбе Claude ничего не знает."""
         with self._lock:
             if self._active_sid is None:
                 raise ControlError("no_active_session", "нет активной записи")
-            logger.info(
-                "Claude (MCP) просит остановить запись %s (owner=%s)", self._active_sid, self._owner)
-            if self._owner == "app":
+            sid, owner = self._active_sid, self._owner
+            logger.info("Claude (MCP) просит остановить запись %s (owner=%s)", sid, owner)
+            if owner == "app":
                 if self._stop_request is None:
                     self._stop_request = "mcp"
-                return {"session_id": self._active_sid, "requested": True}
-        return self.stop_recording({})
+                return {"session_id": sid, "requested": True}
+        result = self.stop_recording({})
+        if owner == "daemon" and "cancelled" not in result:
+            notify("BeeDott",
+                   "Запись остановлена по просьбе Claude — фоллоу-ап придёт через "
+                   "несколько минут", session_id=sid)
+        return result
 
     def _close_recording(self, sid: str, gap_note: str | None = None) -> str | None:
         """Под self._lock. Закрыть запись: проверить файл (незакрытый заголовок

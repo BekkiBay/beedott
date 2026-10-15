@@ -318,10 +318,12 @@ final class AppModel: ObservableObject {
                         // Предохранитель демона (лимит длительности, диск,
                         // размер WAV) — аудит T7 — или Claude (MCP, причина "mcp").
                         NSLog("MeetMind: демон просит остановить запись (%@)", reason)
-                        try? self.performStopRecording()
-                        if reason == "mcp" {
+                        let stopResult = try? self.performStopRecording()
+                        if reason == "mcp", stopResult?["cancelled"] == nil {
                             // Предохранители демона уведомляют сами (notify →
                             // notifications_pop выше) — здесь только причина "mcp".
+                            // Демон мог сам отменить слишком короткую запись
+                            // (cancelled в ответе) — тогда это не «остановлена».
                             NotificationManager.shared.postLocal(
                                 title: "Запись остановлена по просьбе Claude",
                                 message: "Фоллоу-ап придёт через несколько минут.",
@@ -720,7 +722,10 @@ final class AppModel: ObservableObject {
 
     /// Если писали сами (owner=app) — engine.stop() ДО stop_recording (файл должен
     /// быть закрыт и дописан до того, как демон поставит транскрипцию в очередь).
-    nonisolated private func performStopRecording() throws {
+    /// Возвращает ответ демона — вызывающий (mcp-ветка refreshStatus) по нему
+    /// отличает обычный стоп от отмены слишком короткой записи ("cancelled").
+    @discardableResult
+    nonisolated private func performStopRecording() throws -> [String: Any] {
         if capture.owner == "app", let engine = capture.engine {
             let frames = engine.stop()
             NSLog("MeetMind: CaptureEngine.stop() — записано кадров: %llu", frames)
@@ -728,7 +733,7 @@ final class AppModel: ObservableObject {
             capture.sessionId = nil
         }
         defer { capture.owner = "daemon" }
-        _ = try ControlClient.stopRecording()
+        return try ControlClient.stopRecording()
     }
 
     nonisolated private func performCancelRecording() throws {
