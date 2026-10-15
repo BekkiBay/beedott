@@ -25,18 +25,10 @@ if not env_path.exists():
 load_dotenv(env_path)
 
 
-def write_config_env(values: dict[str, str]) -> Path:
-    """Записать пары key=value в app_dir()/config.env и выставить права 0600
-    (SPEC_v3 D14: секреты не должны быть читаемы другими пользователями)."""
-    path = app_dir() / "config.env"
-    path.write_text("\n".join(f"{k}={v}" for k, v in values.items()) + "\n")
-    path.chmod(0o600)
-    return path
-
-
 def update_config_env(key: str, value: str) -> Path:
     """Обновить один ключ в app_dir()/config.env, сохранив остальные строки
-    (write_config_env перезаписывает файл целиком — тут read-modify-write).
+    (read-modify-write), и выставить права 0600 (SPEC_v3 D14: секреты не
+    должны быть читаемы другими пользователями).
 
     Если config.env ещё нет, а настройки живут в dev-файле ./.env — сначала
     переносим его содержимое целиком: после появления config.env модуль читает
@@ -61,13 +53,6 @@ def update_config_env(key: str, value: str) -> Path:
     return path
 
 
-def _bool(name: str, default: bool = False) -> bool:
-    val = os.getenv(name, "")
-    if not val:
-        return default
-    return val.strip().lower() in {"1", "true", "yes", "on", "y"}
-
-
 # ─── LLM / суммаризация ─────────────────────────────────────────────────────
 # Саммари делает Claude (модель — ANTHROPIC_MODEL, выбирается в «Настройке…»).
 # Способ вызова — SUMMARY_BACKEND:
@@ -85,91 +70,12 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL)
 
-# ─── Транскрипция ───────────────────────────────────────────────────────────
-# tiny / base / small / medium / large / large-v3 / turbo
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
-WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "ru")
-
-# ─── Аудио ──────────────────────────────────────────────────────────────────
-# Имя Aggregate Device, созданного в Audio MIDI Setup (BlackHole + Mic).
-# Если не найден — fallback на BlackHole; если и его нет — на дефолтный мик.
-AGGREGATE_DEVICE_NAME = os.getenv("AGGREGATE_DEVICE_NAME", "MeetMind In")
-BLACKHOLE_DEVICE_NAME = os.getenv("BLACKHOLE_DEVICE_NAME", "BlackHole 2ch")
-AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
-
 # ─── Sinks (куда отправлять фоллоу-ап) ──────────────────────────────────────
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Локальные .md файлы
+# Заметка .md пишется всегда; если задан OBSIDIAN_VAULT_PATH — ещё и в vault
 MARKDOWN_BASE_DIR = os.getenv("MARKDOWN_BASE_DIR", "~/MeetMind")
-ENABLE_MARKDOWN_SINK = _bool("ENABLE_MARKDOWN_SINK", True)
-
-# Obsidian
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "")
 OBSIDIAN_SUBFOLDER = os.getenv("OBSIDIAN_SUBFOLDER", "Meetings")
-ENABLE_OBSIDIAN_SINK = _bool("ENABLE_OBSIDIAN_SINK", False) and bool(OBSIDIAN_VAULT_PATH)
-
-# Notion
-NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
-NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
-ENABLE_NOTION_SINK = _bool("ENABLE_NOTION_SINK", False) and bool(NOTION_TOKEN and NOTION_DATABASE_ID)
-
-# ─── Триггеры ───────────────────────────────────────────────────────────────
-ENABLE_CALENDAR_TRIGGER = _bool("ENABLE_CALENDAR_TRIGGER", True)
-ENABLE_PROCESS_TRIGGER = _bool("ENABLE_PROCESS_TRIGGER", True)
-ENABLE_MENUBAR = _bool("ENABLE_MENUBAR", True)
-HOTKEY_START_STOP = os.getenv("HOTKEY_START_STOP", "<cmd>+<shift>+r")
-
-# Какие имена процессов считать триггером для записи
-MEETING_APP_PROCESSES = [
-    p.strip()
-    for p in os.getenv("MEETING_APP_PROCESSES", "zoom.us,zoom").split(",")
-    if p.strip()
-]
-# URL-паттерны для веб-встреч (через активное окно браузера — определится отдельно)
-MEETING_URL_PATTERNS = [
-    p.strip()
-    for p in os.getenv(
-        "MEETING_URL_PATTERNS",
-        "meet.google.com,zoom.us/j/,teams.microsoft.com,whereby.com",
-    ).split(",")
-    if p.strip()
-]
-
-# ─── Google Calendar ────────────────────────────────────────────────────────
-GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
-
-# ─── Пути ───────────────────────────────────────────────────────────────────
-SESSIONS_DIR = Path(os.getenv("SESSIONS_DIR", "sessions"))
-SESSIONS_DIR.mkdir(exist_ok=True)
-
-# ─── Логи ───────────────────────────────────────────────────────────────────
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-
-
-def summary() -> str:
-    """Текстовая сводка по конфигу — для логирования при старте."""
-    lines = ["━" * 60, "MeetMind v3 config:"]
-    if SUMMARY_BACKEND == "api":
-        llm = f"anthropic-api:{ANTHROPIC_MODEL}"
-    else:
-        llm = f"claude-code:{CLAUDE_CODE_MODEL} (Max)"
-    lines.append(f"  LLM:        {SUMMARY_BACKEND} → {llm}")
-    lines.append(f"  Whisper:    {WHISPER_MODEL} / {WHISPER_LANGUAGE}")
-    lines.append(f"  Audio:      agg=«{AGGREGATE_DEVICE_NAME}»  "
-                 f"bh=«{BLACKHOLE_DEVICE_NAME}»  rate={AUDIO_SAMPLE_RATE}Hz")
-    sinks = []
-    if ENABLE_MARKDOWN_SINK: sinks.append(f"md({MARKDOWN_BASE_DIR})")
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID: sinks.append("telegram")
-    if ENABLE_OBSIDIAN_SINK: sinks.append(f"obsidian({OBSIDIAN_VAULT_PATH})")
-    if ENABLE_NOTION_SINK: sinks.append("notion")
-    lines.append(f"  Sinks:      {', '.join(sinks) or '(нет)'}")
-    triggers = []
-    if ENABLE_CALENDAR_TRIGGER: triggers.append("calendar")
-    if ENABLE_PROCESS_TRIGGER: triggers.append("process")
-    if ENABLE_MENUBAR: triggers.append(f"menubar/hotkey({HOTKEY_START_STOP})")
-    lines.append(f"  Triggers:   {', '.join(triggers) or '(нет)'}")
-    lines.append("━" * 60)
-    return "\n".join(lines)
