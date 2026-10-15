@@ -27,6 +27,9 @@ def test_claude_bin_which_fallback(monkeypatch):
 def test_claude_bin_missing(monkeypatch, tmp_path):
     monkeypatch.delenv("MEETMIND_CLAUDE_BIN", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))  # пустой дом: типовых установок нет
+    # и Homebrew-путей нет — не зависим от того, стоит ли claude на этом Mac
+    monkeypatch.setattr(claude_auth, "_HOMEBREW_BIN", tmp_path / "no-brew" / "claude")
+    monkeypatch.setattr(claude_auth, "_USR_LOCAL_BIN", tmp_path / "no-local" / "claude")
     with patch("daemon.claude_auth.shutil.which", return_value=None):
         assert claude_auth.claude_bin() is None
 

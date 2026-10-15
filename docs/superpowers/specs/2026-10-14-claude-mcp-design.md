@@ -314,7 +314,9 @@ Claude Code — разные команды: конфиг Claude Desktop пиш�
 
 - `command` — `sys.executable` (у коллег `runtime/venv/bin/python`, у автора —
   `.venv/bin/python` репозитория);
-- `args` — `["-m", "daemon.mcp_server"]`;
+- `args` — `["-P", "-m", "daemon.mcp_server"]` (`-P`: Claude Code запускает
+  сервер в папке проекта, и без него чужой пакет `daemon/` или `mcp/` в этой
+  папке перекрыл бы код BeeDott);
 - `env` — `PYTHONPATH` = каталог, где лежит пакет `daemon`
   (`Path(daemon.__file__).resolve().parent.parent`: у коллег
   `BeeDott.app/Contents/Resources/backend`, у автора — репозиторий); плюс
