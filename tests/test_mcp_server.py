@@ -346,6 +346,22 @@ def test_action_items_window(daemon):
     assert daemon.calls[0] == ("sessions_list", {"limit": mcp_server.ALL_SESSIONS})
 
 
+def test_action_items_skips_meeting_deleted_between_list_and_detail(daemon):
+    now = datetime.now(timezone.utc)
+    deleted = dict(SESSIONS[0], id="del000", started_at=(now - timedelta(days=1)).isoformat())
+    kept = dict(SESSIONS[0], id="aaa111", started_at=(now - timedelta(days=2)).isoformat())
+    daemon.handlers["sessions_list"] = {"sessions": [deleted, kept]}
+
+    def session_detail(params):
+        if params["session_id"] == "del000":
+            raise control.DaemonError("not_found", "нет сессии del000")
+        return detail()
+
+    daemon.handlers["session_detail"] = session_detail
+    out = mcp_server.action_items(days=7)
+    assert "- сделать — Bekzod" in out
+
+
 def test_recording_status_tool(daemon):
     daemon.handlers["status"] = {"recording": None, "queue": [], "sessions": {}}
     assert mcp_server.recording_status().startswith("Запись не идёт.")
@@ -356,7 +372,7 @@ def test_recording_status_tool(daemon):
     (control.DaemonError("not_found", "нет сессии x"), "Встреча не найдена"),
     (control.DaemonError("busy", "встреча сейчас обрабатывается"),
      "BeeDott: встреча сейчас обрабатывается"),
-    (ValueError("boom"), "BeeDott: ошибка — boom"),
+    (ValueError("boom"), "BeeDott: ошибка — ValueError: boom"),
 ])
 def test_errors_become_readable_tool_errors(daemon, error, text):
     daemon.handlers["session_detail"] = error

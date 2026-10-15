@@ -274,11 +274,11 @@ def tool_errors(fn):
                             "BeeDott и повтори") from exc
         except control.DaemonError as exc:
             if exc.code == "not_found":
-                raise ToolError("Встреча не найдена — возьми id из list_meetings "
-                                "или search_meetings") from exc
+                raise ToolError(f"Встреча не найдена ({exc.message}) — возьми id из "
+                                "list_meetings или search_meetings") from exc
             raise ToolError(f"BeeDott: {exc.message}") from exc
         except Exception as exc:  # noqa: BLE001
-            raise ToolError(f"BeeDott: ошибка — {exc}") from exc
+            raise ToolError(f"BeeDott: ошибка — {type(exc).__name__}: {exc}") from exc
     return wrapper
 
 
@@ -296,7 +296,10 @@ def list_meetings(limit: int = 20) -> str:
 def search_meetings(query: str, limit: int = 10) -> str:
     """Полнотекстовый поиск по саммари и расшифровкам встреч. Результат
     сгруппирован по встречам: название, дата, id и фрагменты с совпадениями.
-    limit — число встреч, от 1 до 50."""
+    limit — число встреч, от 1 до 50.
+    Слова ищутся по началу, и нужны все сразу: давай 1–2 ключевых слова
+    основой без окончания (корзин, минимальн). Пусто — попробуй короче или
+    синоним."""
     results = _call("search", {"query": query})["results"]
     sessions = _call("sessions_list", {"limit": ALL_SESSIONS})["sessions"]
     return format_search(query, results, sessions, _clamp(limit, 1, 50))
@@ -325,9 +328,14 @@ def action_items(days: int = 7) -> str:
     rows = []
     for s in _call("sessions_list", {"limit": ALL_SESSIONS})["sessions"]:
         # session_detail тащит весь транскрипт — только встречи в окне и с задачами
-        if not s.get("action_items") or datetime.fromisoformat(s["started_at"]) < since:
+        if not s.get("action_items") or to_local(s["started_at"]) < since:
             continue
-        followup = _call("session_detail", {"session_id": s["id"]}).get("followup")
+        try:
+            followup = _call("session_detail", {"session_id": s["id"]}).get("followup")
+        except control.DaemonError as exc:
+            if exc.code == "not_found":  # встречу удалили между sessions_list и этим вызовом
+                continue
+            raise
         if followup:
             rows.append((s, followup))
     return format_action_items(rows, days)
