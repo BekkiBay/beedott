@@ -10,15 +10,35 @@ daemon.timeutil — не config и не daemon.db: Claude запускает п�
 произвольным cwd, а `import config` делает mkdir("sessions") от cwd.
 stdout — канал протокола MCP: print() здесь ломает протокол.
 """
+import functools
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
+
+from daemon import control
 from daemon.timeutil import to_local
 
 # Транскрипт за один ответ: лимит вывода MCP в Claude Code ~25 тыс. токенов,
 # кириллица плотнее латиницы; часовая встреча — около 54 000 символов.
 TRANSCRIPT_LIMIT = 60_000
+
+# «Все встречи» для поиска и задач: дефолт демона (200) обрезал бы окно.
+ALL_SESSIONS = 10_000
+
+READ = ToolAnnotations(read_only_hint=True)
+
+INSTRUCTIONS = (
+    "Это встречи пользователя, записанные BeeDott: BeeDott записывает звонки, "
+    "расшифровывает их и пишет фоллоу-ап. meeting_id бери из list_meetings или "
+    "search_meetings. Длинную расшифровку читай страницами: get_meeting с "
+    "include_transcript=true и from_minute из подсказки в конце ответа."
+)
+
+server = MCPServer(name="beedott", instructions=INSTRUCTIONS)
 
 _STATUS = {"delivered": "готово", "processing": "обрабатывается", "error": "ошибка"}
 _SOURCE = {"summary": "саммари", "transcript": "расшифровка"}
@@ -227,3 +247,103 @@ def format_status(st: dict, now: datetime | None = None) -> str:
     if failed:
         lines.append(f"Встреч с ошибкой: {failed} — подробности в list_meetings.")
     return "\n".join(lines)
+
+
+# ─────────────────────────────── инструменты ─────────────────────────────────
+
+
+def _call(method: str, params: dict | None = None) -> dict:
+    return control.request(method, params)
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, int(value)))
+
+
+def tool_errors(fn):
+    """Любая беда → ToolError с понятным текстом: непойманное исключение
+    MCPServer заменяет на безликое «Error executing tool» и теряет текст."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except control.DaemonUnavailable as exc:
+            raise ToolError("BeeDott не запущен или не отвечает — открой приложение "
+                            "BeeDott и повтори") from exc
+        except control.DaemonError as exc:
+            if exc.code == "not_found":
+                raise ToolError("Встреча не найдена — возьми id из list_meetings "
+                                "или search_meetings") from exc
+            raise ToolError(f"BeeDott: {exc.message}") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise ToolError(f"BeeDott: ошибка — {exc}") from exc
+    return wrapper
+
+
+@server.tool(annotations=READ, structured_output=False)
+@tool_errors
+def list_meetings(limit: int = 20) -> str:
+    """Последние встречи пользователя, новые сверху: название, дата, длительность,
+    статус, число задач и id. limit — от 1 до 100."""
+    sessions = _call("sessions_list", {"limit": _clamp(limit, 1, 100)})["sessions"]
+    return format_meeting_list(sessions)
+
+
+@server.tool(annotations=READ, structured_output=False)
+@tool_errors
+def search_meetings(query: str, limit: int = 10) -> str:
+    """Полнотекстовый поиск по саммари и расшифровкам встреч. Результат
+    сгруппирован по встречам: название, дата, id и фрагменты с совпадениями.
+    limit — число встреч, от 1 до 50."""
+    results = _call("search", {"query": query})["results"]
+    sessions = _call("sessions_list", {"limit": ALL_SESSIONS})["sessions"]
+    return format_search(query, results, sessions, _clamp(limit, 1, 50))
+
+
+@server.tool(annotations=READ, structured_output=False)
+@tool_errors
+def get_meeting(meeting_id: str, include_transcript: bool = False,
+                from_minute: int = 0) -> str:
+    """Карточка встречи: название, дата, участники, статус и фоллоу-ап (коротко,
+    что обсуждали, решения, задачи, открытые вопросы). include_transcript=true
+    добавляет расшифровку с таймкодами с минуты from_minute; длинная приходит
+    страницами — в конце подсказка, с какой минуты продолжить."""
+    detail = _call("session_detail", {"session_id": meeting_id})
+    return format_meeting(detail, include_transcript=include_transcript,
+                          from_minute=_clamp(from_minute, 0, 100_000))
+
+
+@server.tool(annotations=READ, structured_output=False)
+@tool_errors
+def action_items(days: int = 7) -> str:
+    """Задачи из фоллоу-апов встреч за последние days дней (от 1 до 90):
+    задача, ответственный, срок и встреча."""
+    days = _clamp(days, 1, 90)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = []
+    for s in _call("sessions_list", {"limit": ALL_SESSIONS})["sessions"]:
+        # session_detail тащит весь транскрипт — только встречи в окне и с задачами
+        if not s.get("action_items") or datetime.fromisoformat(s["started_at"]) < since:
+            continue
+        followup = _call("session_detail", {"session_id": s["id"]}).get("followup")
+        if followup:
+            rows.append((s, followup))
+    return format_action_items(rows, days)
+
+
+@server.tool(annotations=READ, structured_output=False)
+@tool_errors
+def recording_status() -> str:
+    """Идёт ли сейчас запись (название, с какого времени), сколько стадий
+    обработки в очереди и сколько встреч с ошибкой."""
+    return format_status(_call("status"))
+
+
+def main() -> None:
+    server.run("stdio")
+
+
+if __name__ == "__main__":
+    main()

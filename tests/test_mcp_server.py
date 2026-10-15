@@ -257,3 +257,123 @@ def test_status_recording_clock_drift_clamped_to_zero():
           "queue": [], "sessions": {}}
     out = mcp_server.format_status(st, now=now)
     assert "(0 мин)" in out
+
+
+# ───────────────────────────── инструменты ────────────────────────────────────
+
+import asyncio  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
+READ_TOOLS = {"list_meetings", "search_meetings", "get_meeting", "action_items",
+              "recording_status"}
+
+
+class FakeDaemon:
+    """Подмена control.request: ответы по методу, журнал вызовов."""
+
+    def __init__(self):
+        self.handlers: dict = {}
+        self.calls: list[tuple[str, dict]] = []
+
+    def __call__(self, method, params=None, timeout=30):
+        self.calls.append((method, params or {}))
+        handler = self.handlers[method]
+        if isinstance(handler, Exception):
+            raise handler
+        return handler(params or {}) if callable(handler) else handler
+
+
+@pytest.fixture()
+def daemon(monkeypatch):
+    fake = FakeDaemon()
+    monkeypatch.setattr(control, "request", fake)
+    return fake
+
+
+def tools() -> dict:
+    return {t.name: t for t in asyncio.run(mcp_server.server.list_tools())}
+
+
+def test_read_tools_are_read_only():
+    found = tools()
+    assert READ_TOOLS <= set(found)
+    for name in READ_TOOLS:
+        assert found[name].annotations.read_only_hint is True, name
+        assert found[name].description, name
+
+
+def test_list_meetings_clamps_limit(daemon):
+    daemon.handlers["sessions_list"] = {"sessions": SESSIONS}
+    assert "**Синк**" in mcp_server.list_meetings(limit=500)
+    mcp_server.list_meetings(limit=0)
+    assert [c[1]["limit"] for c in daemon.calls] == [100, 1]
+
+
+def test_search_meetings_takes_dates_from_full_list(daemon):
+    daemon.handlers["search"] = {"results": [
+        {"session_id": "aaa111", "title": "Синк", "source": "summary", "snippet": "[[x]]"}]}
+    daemon.handlers["sessions_list"] = {"sessions": SESSIONS}
+    out = mcp_server.search_meetings("x")
+    assert "14.10.2026 10:00" in out
+    assert daemon.calls == [("search", {"query": "x"}),
+                            ("sessions_list", {"limit": mcp_server.ALL_SESSIONS})]
+
+
+def test_get_meeting_passes_transcript_flags(daemon):
+    daemon.handlers["session_detail"] = lambda p: detail()
+    out = mcp_server.get_meeting("aaa111", include_transcript=True, from_minute=1)
+    assert daemon.calls == [("session_detail", {"session_id": "aaa111"})]
+    assert "## Расшифровка\n[01:11] Спикер 2: беру на себя" in out
+
+
+def test_action_items_window(daemon):
+    now = datetime.now(timezone.utc)
+    recent = dict(SESSIONS[0], started_at=(now - timedelta(days=2)).isoformat())
+    old = dict(SESSIONS[0], id="old000", started_at=(now - timedelta(days=30)).isoformat())
+    no_tasks = dict(SESSIONS[1], started_at=(now - timedelta(days=1)).isoformat())
+    daemon.handlers["sessions_list"] = {"sessions": [no_tasks, recent, old]}
+    daemon.handlers["session_detail"] = lambda p: detail()
+    out = mcp_server.action_items(days=7)
+    assert "- сделать — Bekzod" in out
+    assert [c for c in daemon.calls if c[0] == "session_detail"] == \
+        [("session_detail", {"session_id": "aaa111"})]
+    assert daemon.calls[0] == ("sessions_list", {"limit": mcp_server.ALL_SESSIONS})
+
+
+def test_recording_status_tool(daemon):
+    daemon.handlers["status"] = {"recording": None, "queue": [], "sessions": {}}
+    assert mcp_server.recording_status().startswith("Запись не идёт.")
+
+
+@pytest.mark.parametrize("error, text", [
+    (control.DaemonUnavailable("нет сокета"), "BeeDott не запущен или не отвечает"),
+    (control.DaemonError("not_found", "нет сессии x"), "Встреча не найдена"),
+    (control.DaemonError("busy", "встреча сейчас обрабатывается"),
+     "BeeDott: встреча сейчас обрабатывается"),
+    (ValueError("boom"), "BeeDott: ошибка — boom"),
+])
+def test_errors_become_readable_tool_errors(daemon, error, text):
+    daemon.handlers["session_detail"] = error
+    with pytest.raises(ToolError, match=text):
+        mcp_server.get_meeting("x")
+
+
+def test_errors_reach_client_through_server(daemon):
+    daemon.handlers["session_detail"] = control.DaemonError("not_found", "нет сессии x")
+    with pytest.raises(ToolError, match="Встреча не найдена"):
+        asyncio.run(mcp_server.server.call_tool("get_meeting", {"meeting_id": "x"}))
+
+
+def test_import_does_not_pull_config():
+    code = ("import sys, daemon.mcp_server; "
+            "bad = [m for m in ('config', 'daemon.db', 'daemon.stages') if m in sys.modules]; "
+            "print(bad); sys.exit(1 if bad else 0)")
+    r = subprocess.run([sys.executable, "-c", code], cwd="/", capture_output=True, text=True,
+                       env={**os.environ, "PYTHONPATH": str(REPO)})
+    assert r.returncode == 0, r.stdout + r.stderr
