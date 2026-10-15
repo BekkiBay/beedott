@@ -300,11 +300,13 @@ final class SetupModel: ObservableObject {
     }
 
     func performClaude(connect: Bool) {
+        guard claudePhase != .running else { return }
         claudeConfirm = nil
         claudePhase = .running
         claudeCodeResult = nil
         claudeCodeCommand = nil
-        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeBundleId)
+        let bundleId = Self.claudeBundleId
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
         let wasRunning = !apps.isEmpty
         apps.forEach { $0.terminate() }
         queue.async { [runtime] in
@@ -313,7 +315,12 @@ final class SetupModel: ObservableObject {
                 while Date() < deadline && apps.contains(where: { !$0.isTerminated }) {
                     Thread.sleep(forTimeInterval: 0.2)
                 }
-                if apps.contains(where: { !$0.isTerminated }) {
+                // Закрылись все захваченные экземпляры — но за это время мог успеть
+                // открыться новый (пользователь или сама macOS); пишем конфиг только
+                // когда Claude точно не держит старую версию в памяти.
+                let stillRunning = apps.contains(where: { !$0.isTerminated })
+                    || !NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).isEmpty
+                if stillRunning {
                     Task { @MainActor in
                         self.claudePhase = .failed("Claude не закрылся — закрой его вручную и нажми ещё раз")
                     }
@@ -321,9 +328,10 @@ final class SetupModel: ObservableObject {
                 }
             }
             let result = runtime.runSetup(connect ? "claude-connect" : "claude-disconnect")
-            if wasRunning { Task { @MainActor in self.openClaude() } }
+            if wasRunning { Task { @MainActor in self.openClaude(activate: false) } }
             if case .error(let code, let message) = result {
                 Task { @MainActor in
+                    if code == "bad_config" { self.claudeState = "bad_config" }
                     self.claudePhase = .failed(RuntimeLogic.setupErrorText(code: code, message: message))
                 }
                 return
@@ -363,10 +371,12 @@ final class SetupModel: ObservableObject {
         }
     }
 
-    func openClaude() {
+    func openClaude(activate: Bool = true) {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.claudeBundleId)
         else { return }
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = activate
+        NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
     // MARK: общее
@@ -405,7 +415,8 @@ struct SetupRootView: View {
                 case .speech: SpeechStepView(model: model)
                 case .summary: SummaryStepView(model: model)
                 case .telegram: TelegramStepView(model: model)
-                case .claude: ClaudeStepView(model: model)
+                case .claude:
+                    ScrollView { ClaudeStepView(model: model).frame(maxWidth: .infinity, alignment: .leading) }
                 case .done: DoneStepView(model: model)
                 }
             }
@@ -462,11 +473,11 @@ struct SetupRootView: View {
             case .claude:
                 if !model.claudeConnected && model.claudeCodeResult != "added" {
                     Button("Пропустить") { model.next() }
-                        .disabled(model.claudePhase == .running)
+                        .disabled(model.claudePhase == .running || model.claudeConfirm != nil)
                 }
                 Button("Далее") { model.next() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(model.claudePhase == .running
+                    .disabled(model.claudePhase == .running || model.claudeConfirm != nil
                               || (!model.claudeConnected && model.claudeCodeResult != "added"))
             case .done:
                 Button("Начать") { model.finish() }
@@ -760,7 +771,7 @@ private struct ClaudeStepView: View {
                     Button("Отмена") { model.claudeConfirm = nil }
                 }
             } else if model.claudePhase == .running {
-                busyRow("Подключаю…")
+                busyRow(model.claudeConnected ? "Отключаю…" : "Подключаю…")
             } else {
                 content
             }
@@ -842,7 +853,8 @@ private struct ClaudeStepView: View {
     @ViewBuilder private var codeResult: some View {
         switch model.claudeCodeResult {
         case "added":
-            Label("Подключено и к Claude Code", systemImage: "checkmark.circle.fill")
+            Label(model.claudeConnected ? "Подключено и к Claude Code" : "Подключено к Claude Code",
+                  systemImage: "checkmark.circle.fill")
                 .font(.system(size: 12))
         case "failed":
             Text("Claude Code не подключился сам — выполни команду в терминале.")
@@ -856,10 +868,13 @@ private struct ClaudeStepView: View {
         if let command = model.claudeCodeCommand {
             DisclosureGroup("Команда для Claude Code") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(command)
-                        .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
-                        .lineLimit(5)
+                    ScrollView {
+                        Text(command)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 72)
                     Button("Скопировать") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(command, forType: .string)
