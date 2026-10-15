@@ -842,13 +842,12 @@ private struct ClaudeStepView: View {
         }
     }
 
-    // Этап 1 — только чтение; этапы 2 и 3 дописывают правку и запись.
     static let exampleRequests = [
         "Что решили на последней встрече?",
         "Какие задачи на мне за неделю?",
-        "Где обсуждали минимальную корзину?",
+        "В задаче про отчёт исполнитель — Стас, поправь",
     ]
-    static let dataNote = "Claude видит встречу, только когда сам её запрашивает; ответы идут в твой аккаунт Claude."
+    static let dataNote = "Claude видит встречу, только когда сам её запрашивает; ответы идут в твой аккаунт Claude. Менять встречи Claude будет с твоего разрешения в Claude."
 
     @ViewBuilder private var codeResult: some View {
         switch model.claudeCodeResult {

@@ -454,3 +454,48 @@ def test_import_does_not_pull_config():
     r = subprocess.run([sys.executable, "-c", code], cwd="/", capture_output=True, text=True,
                        env={**os.environ, "PYTHONPATH": str(REPO)})
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+EDIT_TOOLS = {"rename_meeting", "resummarize_meeting", "update_followup", "set_keep_audio"}
+
+
+def test_edit_tool_annotations():
+    found = tools()
+    for name in EDIT_TOOLS:
+        a = found[name].annotations
+        assert (a.read_only_hint, a.destructive_hint) == (False, False), name
+    a = found["delete_meeting"].annotations
+    assert (a.read_only_hint, a.destructive_hint) == (False, True)
+    schema = found["update_followup"].input_schema
+    assert {"meeting_id", "followup", "resend"} <= set(schema["properties"])
+
+
+def test_edit_tools_pass_params(daemon):
+    daemon.handlers.update({
+        "rename_session": lambda p: {"session_id": p["session_id"], "title": p["title"]},
+        "resummarize": {"session_id": "aaa111", "state": "TRANSCRIBED"},
+        "update_followup": lambda p: {"session_id": p["session_id"], "revision": 3,
+                                      "resend": p["resend"], "telegram": "pending"},
+        "set_keep_audio": lambda p: {"session_id": p["session_id"], "keep_audio": p["keep"]},
+        "delete_session": {"session_id": "aaa111", "deleted": True},
+    })
+    assert "«Ретро»" in mcp_server.rename_meeting("aaa111", "Ретро")
+    assert "Пересобираю" in mcp_server.resummarize_meeting("aaa111")
+    out = mcp_server.update_followup("aaa111", dict(GOOD), resend=True)
+    assert "ревизия 3" in out and "Telegram" in out
+    assert "закреплено" in mcp_server.set_keep_audio("aaa111", True)
+    assert "удалена" in mcp_server.delete_meeting("aaa111", "Синк")
+    assert daemon.calls == [
+        ("rename_session", {"session_id": "aaa111", "title": "Ретро"}),
+        ("resummarize", {"session_id": "aaa111"}),
+        ("update_followup", {"session_id": "aaa111", "followup": dict(GOOD), "resend": True}),
+        ("set_keep_audio", {"session_id": "aaa111", "keep": True}),
+        ("delete_session", {"session_id": "aaa111", "title": "Синк"}),
+    ]
+
+
+def test_delete_with_wrong_title_is_readable(daemon):
+    daemon.handlers["delete_session"] = control.DaemonError(
+        "bad_params", "название не совпадает: встреча aaa111 называется «Синк»")
+    with pytest.raises(ToolError, match="называется «Синк»"):
+        mcp_server.delete_meeting("aaa111", "Ретро")

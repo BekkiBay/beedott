@@ -60,7 +60,9 @@ daemon.mcp_server` (stdio), ходит в демон через `control.sock`, 
 `claude mcp add-json --scope user beedott …`). Вручную для Claude Code — та же
 команда из шага мастера («Команда для Claude Code»). Инструменты:
 `list_meetings`, `search_meetings`, `get_meeting`, `action_items`,
-`recording_status`. Спек: `docs/superpowers/specs/2026-10-14-claude-mcp-design.md`.
+`recording_status`, `rename_meeting`, `resummarize_meeting`, `update_followup`
+(с `resend` в Telegram), `set_keep_audio`, `delete_meeting` (сверяет
+название). Спек: `docs/superpowers/specs/2026-10-14-claude-mcp-design.md`.
 
 ---
 

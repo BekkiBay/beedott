@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from typing_extensions import TypedDict
 
 from daemon import control
 from daemon.timeutil import to_local
@@ -31,12 +32,18 @@ TRANSCRIPT_LIMIT = 40_000
 ALL_SESSIONS = 10_000
 
 READ = ToolAnnotations(read_only_hint=True)
+EDIT = ToolAnnotations(read_only_hint=False, destructive_hint=False)
+DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
 INSTRUCTIONS = (
     "Это встречи пользователя, записанные BeeDott: BeeDott записывает звонки, "
     "расшифровывает их и пишет фоллоу-ап. meeting_id бери из list_meetings или "
     "search_meetings. Длинную расшифровку читай страницами: get_meeting с "
-    "include_transcript=true и from_minute из подсказки в конце ответа."
+    "include_transcript=true и from_minute из подсказки в конце ответа. "
+    "Править встречи можно только по просьбе пользователя. Перед update_followup "
+    "прочитай встречу через get_meeting и пришли фоллоу-ап целиком, изменив только "
+    "то, о чём просили; resend=true — только если пользователь просил отправить в "
+    "Telegram. Удаляй встречу только по явной просьбе."
 )
 
 server = MCPServer(name="beedott", instructions=INSTRUCTIONS)
@@ -361,6 +368,81 @@ def recording_status() -> str:
     """Идёт ли сейчас запись (название, с какого времени), сколько стадий
     обработки в очереди и сколько встреч с ошибкой."""
     return format_status(_call("status"))
+
+
+class ActionItem(TypedDict):
+    task: str
+    owner: str
+    deadline: str | None
+
+
+class Followup(TypedDict):
+    """Фоллоу-ап по схеме SPEC_v3 §7; окончательная проверка — в демоне
+    (summarizer.validate_followup)."""
+    context: str
+    discussed: list[str]
+    decisions: list[str]
+    action_items: list[ActionItem]
+    open_questions: list[str]
+
+
+@server.tool(annotations=EDIT, structured_output=False)
+@tool_errors
+def rename_meeting(meeting_id: str, title: str) -> str:
+    """Переименовать встречу. Библиотека и поиск увидят новое название; уже
+    отправленные сообщения Telegram и заметки не меняются."""
+    r = _call("rename_session", {"session_id": meeting_id, "title": title})
+    return f"Встреча переименована: «{r['title']}»."
+
+
+@server.tool(annotations=EDIT, structured_output=False)
+@tool_errors
+def resummarize_meeting(meeting_id: str) -> str:
+    """Заново собрать фоллоу-ап встречи через Claude из той же расшифровки —
+    как кнопка «Пересобрать саммари» в карточке."""
+    _call("resummarize", {"session_id": meeting_id})
+    return ("Пересобираю фоллоу-ап — новая версия появится в Библиотеке через пару "
+            "минут и, если подключён Telegram, придёт туда ответом на прежнюю.")
+
+
+@server.tool(annotations=EDIT, structured_output=False)
+@tool_errors
+def update_followup(meeting_id: str, followup: Followup, resend: bool = False) -> str:
+    """Заменить фоллоу-ап встречи исправленной версией. Сначала прочитай встречу
+    через get_meeting и пришли фоллоу-ап ЦЕЛИКОМ (все пять разделов), изменив
+    только то, о чём просил пользователь. deadline — дата, "asap" или null.
+    resend=true — ещё и отправить новую версию в Telegram ответом на прежнюю
+    (только если пользователь просил)."""
+    r = _call("update_followup", {"session_id": meeting_id, "followup": dict(followup),
+                                  "resend": resend})
+    sent = {
+        "pending": "Новая версия уйдёт в Telegram ответом на прежнюю.",
+        "unchanged": "В Telegram не отправляю.",
+        "off": "Telegram не подключён.",
+    }.get(r.get("telegram"), "")
+    return (f"Фоллоу-ап обновлён (ревизия {r['revision']}); заметка в ~/MeetMind "
+            f"обновится. {sent} Прежняя версия сохранена.").strip()
+
+
+@server.tool(annotations=EDIT, structured_output=False)
+@tool_errors
+def set_keep_audio(meeting_id: str, keep: bool) -> str:
+    """Хранить аудио встречи (keep=true): автоочистка старых записей его не
+    удалит. keep=false — снова по общим правилам."""
+    _call("set_keep_audio", {"session_id": meeting_id, "keep": keep})
+    return ("Аудио закреплено — автоочистка его не удалит." if keep
+            else "Аудио снова удаляется по общим правилам.")
+
+
+@server.tool(annotations=DELETE, structured_output=False)
+@tool_errors
+def delete_meeting(meeting_id: str, title: str) -> str:
+    """Удалить встречу навсегда: аудио, расшифровку, фоллоу-ап и поиск. Заметки
+    в ~/MeetMind и сообщения в Telegram останутся. Только по явной просьбе
+    пользователя. title — точное название встречи из list_meetings или
+    get_meeting: если не совпадёт, ничего не удалится."""
+    _call("delete_session", {"session_id": meeting_id, "title": title})
+    return f"Встреча «{title}» удалена. Заметки в ~/MeetMind и сообщения в Telegram остались."
 
 
 def main() -> None:
