@@ -222,13 +222,17 @@ def mcp_launch() -> dict:
     PYTHONPATH (у коллег — Resources/backend в .app, у автора — репо). Одна
     функция для status и подключения — сравнивают одно и то же.
     PYTHONPYCACHEPREFIX обязателен у коллег: иначе __pycache__ ляжет в .app и
-    сломает подпись."""
+    сломает подпись.
+    -P — не класть cwd первым в sys.path: Claude Code запускает MCP-сервер в
+    папке проекта пользователя, и свой daemon/ или mcp/ пакет там перекрыл бы
+    наш (Python ≥3.11, рантайм — 3.11)."""
+    import config  # noqa: F401 — config.env в os.environ: status и connect видят одно окружение
     import daemon
     env = {"PYTHONPATH": str(Path(daemon.__file__).resolve().parent.parent)}
-    for key in ("PYTHONPYCACHEPREFIX", "MEETMIND_APPDIR"):
+    for key in ("PYTHONPYCACHEPREFIX", "MEETMIND_APPDIR", "MEETMIND_TZ"):
         if os.environ.get(key):
             env[key] = os.environ[key]
-    return {"command": sys.executable, "args": ["-m", "daemon.mcp_server"], "env": env}
+    return {"command": sys.executable, "args": ["-P", "-m", "daemon.mcp_server"], "env": env}
 
 
 def _read_desktop_config(path: Path) -> dict:

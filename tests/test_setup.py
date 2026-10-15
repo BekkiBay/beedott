@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -466,7 +467,7 @@ def test_claude_connect_creates_config(appdir, capsys):
     entry = json.loads(path.read_text())["mcpServers"]["beedott"]
     assert entry == setup.mcp_launch()
     assert entry["command"] == sys.executable
-    assert entry["args"] == ["-m", "daemon.mcp_server"]
+    assert entry["args"] == ["-P", "-m", "daemon.mcp_server"]
     assert (Path(entry["env"]["PYTHONPATH"]) / "daemon" / "mcp_server.py").exists()
 
 
@@ -545,6 +546,55 @@ def test_status_claude_states(appdir, capsys):
 def test_launch_env_carries_pycache_prefix(appdir, monkeypatch):
     monkeypatch.setenv("PYTHONPYCACHEPREFIX", "/tmp/pyc")
     assert setup.mcp_launch()["env"]["PYTHONPYCACHEPREFIX"] == "/tmp/pyc"
+
+
+def test_launch_env_carries_tz(appdir, monkeypatch):
+    monkeypatch.setenv("MEETMIND_TZ", "Asia/Tashkent")
+    assert setup.mcp_launch()["env"]["MEETMIND_TZ"] == "Asia/Tashkent"
+
+
+def test_mcp_launch_not_shadowed_by_project_package(appdir, tmp_path):
+    """Claude Code запускает MCP-сервер в папке проекта пользователя. Без -P
+    cwd встаёт первым в sys.path, и свой daemon/-пакет в проекте перекрыл бы
+    наш — кладём такой фейковый пакет и проверяем, что `python -P -m
+    daemon.mcp_server` всё равно импортирует настоящий модуль из репозитория."""
+    project = tmp_path / "project"
+    (project / "daemon").mkdir(parents=True)
+    (project / "daemon" / "__init__.py").write_text("raise RuntimeError('чужой daemon')\n")
+    entry = setup.mcp_launch()
+    assert entry["args"][0] == "-P"
+    code = "import daemon.mcp_server, sys; print(daemon.mcp_server.__file__)"
+    r = subprocess.run([entry["command"], "-P", "-c", code], cwd=project,
+                       env=entry["env"], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+    repo = Path(__file__).resolve().parent.parent
+    assert Path(r.stdout.strip()).resolve().is_relative_to(repo)
+
+
+def test_claude_connect_and_status_see_same_environment(appdir, monkeypatch):
+    """В проде claude-connect и status — разные процессы `python -m
+    daemon.setup <команда>`: без общего `import config` каждый видел бы своё
+    окружение. Если в config.env лежит PYTHONPYCACHEPREFIX, status (который
+    уже импортировал config через _setting()) всегда пересчитывал бы want с
+    этим ключом, а connect писал бы запись без него — stale навсегда.
+    Чистим окружение от PYTHONPYCACHEPREFIX/MEETMIND_TZ, чтобы тест не зависел
+    от того, что уже экспортировано в шелле, где запущен pytest."""
+    monkeypatch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+    monkeypatch.delenv("MEETMIND_TZ", raising=False)
+    write_config(appdir, "PYTHONPYCACHEPREFIX=/tmp/somewhere\n")
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""),
+           "PYTHONPATH": str(Path(__file__).resolve().parent.parent),
+           "MEETMIND_APPDIR": str(appdir),
+           "MEETMIND_CLAUDE_DESKTOP_CONFIG": os.environ["MEETMIND_CLAUDE_DESKTOP_CONFIG"]}
+
+    def run(cmd):
+        r = subprocess.run([sys.executable, "-m", "daemon.setup", cmd],
+                           capture_output=True, text=True, env=env, timeout=30)
+        assert r.returncode == 0, r.stdout + r.stderr
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    run("claude-connect")
+    assert run("status")["claude"] == "connected"
 
 
 # ───── MCP: аккуратная запись конфига Claude Desktop ──────────────────────────

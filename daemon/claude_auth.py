@@ -23,6 +23,11 @@ AUTH_STATUS_TIMEOUT_S = 30
 # env-ключи, которые перехватывают биллинг у OAuth-токена (см. прецеденс выше)
 _BILLING_OVERRIDE_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
+# Homebrew ставит claude сюда, а урезанный PATH демона (см. docstring claude_bin)
+# их не видит — проверяем перед nvm/~/.local.
+_HOMEBREW_BIN = Path("/opt/homebrew/bin/claude")
+_USR_LOCAL_BIN = Path("/usr/local/bin/claude")
+
 
 def _node_version(bin_path: Path) -> tuple[int, ...]:
     """~/.nvm/versions/node/v26.1.0/bin/claude → (26, 1, 0)."""
@@ -38,7 +43,8 @@ def claude_bin() -> str | None:
         return found
     home = Path.home()
     nvm = sorted(home.glob(".nvm/versions/node/*/bin/claude"), key=_node_version, reverse=True)
-    for path in [home / ".local/bin/claude", home / ".claude/local/claude", *nvm]:
+    for path in [_HOMEBREW_BIN, _USR_LOCAL_BIN, home / ".local/bin/claude",
+                 home / ".claude/local/claude", *nvm]:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     return None
