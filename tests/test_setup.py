@@ -545,3 +545,71 @@ def test_status_claude_states(appdir, capsys):
 def test_launch_env_carries_pycache_prefix(appdir, monkeypatch):
     monkeypatch.setenv("PYTHONPYCACHEPREFIX", "/tmp/pyc")
     assert setup.mcp_launch()["env"]["PYTHONPYCACHEPREFIX"] == "/tmp/pyc"
+
+
+# ───── MCP: аккуратная запись конфига Claude Desktop ──────────────────────────
+
+
+def test_claude_connect_keeps_file_mode(appdir, capsys):
+    import stat
+    path = write_desktop({"mcpServers": {}})
+    path.chmod(0o600)
+    assert setup.main(["claude-connect"]) == 0
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_claude_connect_readonly_target_untouched(appdir, capsys):
+    path = write_desktop({"mcpServers": {"trino": {"command": "t"}}})
+    original = path.read_bytes()
+    path.chmod(0o444)
+    try:
+        assert setup.main(["claude-connect"]) == 1
+        ev = events(capsys)[-1]
+        assert ev["code"] == "internal"
+        assert path.read_bytes() == original
+        assert not path.with_name(path.name + ".beedott.bak").exists()
+        assert not path.with_name(path.name + ".beedott.tmp").exists()
+    finally:
+        path.chmod(0o644)
+
+
+def test_claude_connect_backup_not_blocked_by_readonly_bak(appdir, capsys):
+    """Старый .beedott.bak может остаться read-only (например, от бэкапа
+    когда-то read-only файла) — это не должно мешать снять новый бэкап."""
+    path = write_desktop({"mcpServers": {"trino": {"command": "t"}}})
+    bak = path.with_name(path.name + ".beedott.bak")
+    bak.write_text("stale")
+    bak.chmod(0o444)
+    try:
+        assert setup.main(["claude-connect"]) == 0
+        assert json.loads(bak.read_text())["mcpServers"] == {"trino": {"command": "t"}}
+    finally:
+        bak.chmod(0o644)
+
+
+def test_claude_connect_non_finite_number_fails_cleanly(appdir, capsys):
+    raw = '{"x": 1e400}'
+    path = write_desktop(raw)
+    assert setup.main(["claude-connect"]) == 1
+    assert path.read_text() == raw
+    assert not any(p.name.endswith(".beedott.tmp") for p in path.parent.iterdir())
+
+
+def test_claude_connect_second_call_is_noop_and_keeps_first_backup(appdir, capsys):
+    original = {"mcpServers": {"trino": {"command": "t"}}}
+    path = write_desktop(original)
+    assert setup.main(["claude-connect"]) == 0
+    bak = path.with_name(path.name + ".beedott.bak")
+    assert json.loads(bak.read_text()) == original
+    after_first = path.read_text()
+    assert setup.main(["claude-connect"]) == 0
+    assert json.loads(bak.read_text()) == original
+    assert path.read_text() == after_first
+
+
+def test_status_claude_state_never_raises(appdir, capsys, monkeypatch):
+    def boom(path):
+        raise RecursionError("слишком вложенный JSON")
+    monkeypatch.setattr(setup, "_read_desktop_config", boom)
+    assert setup.main(["status"]) == 0
+    assert events(capsys)[-1]["claude"] == "bad_config"

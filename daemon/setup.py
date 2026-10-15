@@ -249,24 +249,45 @@ def _read_desktop_config(path: Path) -> dict:
 
 
 def _write_desktop_config(path: Path, data: dict) -> None:
-    """Копия в .beedott.bak, затем временный файл + os.replace. Симлинк
-    остаётся симлинком — пишем в файл, на который он указывает."""
+    """Файл только для чтения — не трогаем вовсе (ни .bak, ни .tmp): владелец
+    явно запретил запись. Иначе — бэкап в .beedott.bak (старый .bak может быть
+    read-only, поэтому unlink перед copy2, чтобы не упереться в Permission
+    denied), затем временный файл с правами оригинала (shutil.copymode) и
+    os.replace; .tmp подчищаем в finally при любом исходе. Текст собираем
+    (allow_nan=False — не JSON-совместимые inf/nan не пишем) до того, как
+    что-либо создаём на диске: сбой сериализации не должен оставлять мусор.
+    Симлинк остаётся симлинком — пишем в файл, на который он указывает."""
     target = path.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        shutil.copy2(target, target.with_name(target.name + ".beedott.bak"))
+    exists = target.exists()
+    if exists and not os.access(target, os.W_OK):
+        raise SetupError("internal", f"{target}: файл только для чтения — BeeDott его не меняет")
+    text = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    if exists:
+        bak = target.with_name(target.name + ".beedott.bak")
+        bak.unlink(missing_ok=True)
+        shutil.copy2(target, bak)
     tmp = target.with_name(target.name + ".beedott.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, target)
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        if exists:
+            shutil.copymode(target, tmp)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def cmd_claude_connect() -> dict:
     """Записать mcpServers.beedott; preferences, чужие серверы и прочее — как
-    есть. Пишется только при закрытом Claude Desktop (мастер закрывает его сам):
+    есть. Уже подключено тем же способом — не пишем вовсе (иначе повторный
+    запуск мастера затирал бы свежий .bak копией уже изменённого файла).
+    Пишется только при закрытом Claude Desktop (мастер закрывает его сам):
     открытый Claude при выходе перезаписал бы файл своей копией."""
     path = desktop_config_path()
     data = _read_desktop_config(path)
     servers = dict(data.get("mcpServers") or {})
+    if servers.get(CLAUDE_SERVER_NAME) == mcp_launch():
+        return {"config": str(path)}
     servers[CLAUDE_SERVER_NAME] = mcp_launch()
     data["mcpServers"] = servers
     _write_desktop_config(path, data)
@@ -290,7 +311,7 @@ def claude_desktop_state() -> str | None:
     «нужна настройка»."""
     try:
         data = _read_desktop_config(desktop_config_path())
-    except (OSError, ValueError, SetupError):
+    except Exception:  # noqa: BLE001 — любой сбой чтения, не только ожидаемые
         return "bad_config"
     entry = (data.get("mcpServers") or {}).get(CLAUDE_SERVER_NAME)
     if entry is None:
