@@ -60,6 +60,11 @@ struct SummaryModelOption: Equatable {
     let caption: String
 }
 
+/// Подключение BeeDott к Claude Desktop — поле claude из `daemon.setup status`.
+enum ClaudeConnection: Equatable {
+    case disconnected, connected, stale, badConfig
+}
+
 enum RuntimeLogic {
     static let defaultSummaryModel = "claude-opus-5-5"
     static let summaryModels: [SummaryModelOption] = [
@@ -119,6 +124,16 @@ enum RuntimeLogic {
         !venvPythonExists || installedLockHash == nil || bundledLockHash != installedLockHash
     }
 
+    /// Поле claude из status: connected | stale | bad_config | null.
+    static func claudeConnection(_ raw: String?) -> ClaudeConnection {
+        switch raw {
+        case "connected": return .connected
+        case "stale": return .stale
+        case "bad_config": return .badConfig
+        default: return .disconnected
+        }
+    }
+
     /// Текст для человека по коду ошибки daemon/setup.py.
     static func setupErrorText(code: String, message: String) -> String {
         switch code {
@@ -130,6 +145,9 @@ enum RuntimeLogic {
         case "timeout": return "Бот не получил /start — открой его в Telegram и нажми «Запустить»"
         case "bad_model": return "Такой модели нет в списке"
         case "too_long": return "Инструкция длиннее 20 000 символов — сократи"
+        case "bad_config":
+            return "Конфиг Claude повреждён — открой Claude → Настройки → Developer и исправь файл"
+                + (message.isEmpty ? "" : ": \(message)")
         default: return "Что-то пошло не так: \(message)"
         }
     }

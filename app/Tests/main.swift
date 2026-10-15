@@ -330,4 +330,14 @@ do {
     check(RuntimeLogic.setupErrorText(code: "too_long", message: "").contains("20 000"), "текст too_long")
 }
 
+// 25. Шаг «Claude»: состояние подключения из status и текст ошибки конфига.
+do {
+    check(RuntimeLogic.claudeConnection("connected") == .connected, "connected")
+    check(RuntimeLogic.claudeConnection("stale") == .stale, "stale")
+    check(RuntimeLogic.claudeConnection("bad_config") == .badConfig, "bad_config")
+    check(RuntimeLogic.claudeConnection(nil) == .disconnected, "нет ключа")
+    check(RuntimeLogic.setupErrorText(code: "bad_config", message: "/x.json").contains("/x.json"),
+          "путь в тексте bad_config")
+}
+
 if failures == 0 { print("OK — все тесты прошли") } else { print("\(failures) провалено"); exit(1) }
