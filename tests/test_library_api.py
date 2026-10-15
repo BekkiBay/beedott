@@ -11,8 +11,9 @@ import json
 import pytest
 
 import config
-from daemon import claude_cli, db, stages
+from daemon import claude_cli, db, followup_edit, stages
 from daemon.app import DaemonApp
+from daemon.control import ControlError
 from daemon.paths import session_dir
 from daemon.states import State
 from tests.conftest import GOOD_FOLLOWUP as GOOD
@@ -233,6 +234,50 @@ def test_resummarize_forgets_telegram_progress(app):
     app.resummarize({"session_id": sid})
 
     assert not progress.exists()
+
+
+def test_resummarize_without_transcript_is_no_transcript(app):
+    """FAILED на стадии transcribe — transcript.txt не появился (упала сама
+    транскрипция). Пересобирать саммари не из чего."""
+    con = app._con
+    sid = _mk_session(con, state=State.TRANSCRIBING, transcript=False, followup=False)
+    db.set_state(con, sid, State.FAILED)
+
+    with pytest.raises(ControlError) as exc:
+        app.resummarize({"session_id": sid})
+
+    assert exc.value.code == "no_transcript"
+    assert db.get_session(con, sid)["state"] == State.FAILED
+
+
+def test_resummarize_right_after_followup_edit_is_busy(app):
+    """update_followup уже перевёл сессию в SUMMARIZED и поставил deliver в
+    очередь — resummarize в этот момент не должен перехватывать доставку
+    правки (ответ busy, доставки и прогресс Telegram не трогаются)."""
+    con = app._con
+    sid = _mk_session(con)
+    con.execute("INSERT INTO deliveries(session_id, sink, status, delivered_at)"
+                " VALUES(?,?,?,?)", (sid, "telegram", "delivered", db.now()))
+    con.commit()
+    followup_edit.apply(con, sid, GOOD, resend=False)
+    assert db.get_session(con, sid)["state"] == State.SUMMARIZED
+    deliver_job = con.execute(
+        "SELECT status FROM pipeline_jobs WHERE session_id=? AND stage='deliver'",
+        (sid,)).fetchone()
+    assert deliver_job["status"] == "queued"
+    deliveries_before = {r["sink"]: (r["status"], r["delivered_at"]) for r in con.execute(
+        "SELECT sink, status, delivered_at FROM deliveries WHERE session_id=?", (sid,))}
+    progress = session_dir(sid) / "telegram_progress.json"
+    progress.write_text('{"hash": "x", "sent": ["1"]}')
+
+    with pytest.raises(ControlError) as exc:
+        app.resummarize({"session_id": sid})
+
+    assert exc.value.code == "busy"
+    deliveries_after = {r["sink"]: (r["status"], r["delivered_at"]) for r in con.execute(
+        "SELECT sink, status, delivered_at FROM deliveries WHERE session_id=?", (sid,))}
+    assert deliveries_after == deliveries_before
+    assert progress.exists()
 
 
 # ───────────────────────── status: метаданные записи ─────────────────────────

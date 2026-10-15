@@ -212,6 +212,26 @@ def test_busy_states(con, state, message):
     assert exc.value.code == "busy" and message in str(exc.value)
 
 
+def test_second_edit_before_delivery_is_allowed(con):
+    """SUMMARIZED (правка уже прошла, deliver ещё в очереди — оркестратор не
+    бежал) — вторая правка не должна упираться в busy: SUMMARIZED -> SUMMARIZED
+    разрешённый самопереход, redeliver его отработает."""
+    sid = _session(con)
+    second = dict(GOOD, action_items=[{"task": "Вторая правка", "owner": "Стас", "deadline": None}])
+    assert followup_edit.apply(con, sid, EDITED, resend=False) == {
+        "session_id": sid, "revision": 2, "resend": False, "telegram": "off"}
+    assert db.get_session(con, sid)["state"] == State.SUMMARIZED
+    assert followup_edit.apply(con, sid, second, resend=False) == {
+        "session_id": sid, "revision": 3, "resend": False, "telegram": "off"}
+    sdir = session_dir(sid)
+    assert json.loads((sdir / "followup.r1.json").read_text(encoding="utf-8"))["revision"] == 1
+    assert json.loads((sdir / "followup.r2.json").read_text(encoding="utf-8"))["revision"] == 2
+    saved = json.loads((sdir / "followup.json").read_text(encoding="utf-8"))
+    assert saved["revision"] == 3 and saved["action_items"] == second["action_items"]
+    deliver = _jobs(con, sid)["deliver"]
+    assert (deliver["status"], deliver["attempts"]) == ("queued", 0)
+
+
 def test_running_job_is_busy(con):
     sid = _session(con)
     con.execute("UPDATE pipeline_jobs SET status='running' WHERE session_id=? AND stage='deliver'",

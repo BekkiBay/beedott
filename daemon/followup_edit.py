@@ -53,7 +53,11 @@ def _check_editable(con, row, sid: str) -> Path:
         raise EditError("busy", "идёт запись этой встречи")
     running = con.execute("SELECT 1 FROM pipeline_jobs WHERE session_id=? AND status='running'",
                           (sid,)).fetchone()
-    if state not in (State.DELIVERED, State.FAILED) or running:
+    # SUMMARIZED — тоже прежняя правка: redeliver уже перевёл сессию туда и
+    # поставил deliver в очередь, но демон её ещё не довёл до DELIVERED.
+    # SUMMARIZED -> SUMMARIZED — разрешённый самопереход (daemon/states.py),
+    # вторая правка подряд не должна упираться в busy.
+    if state not in (State.DELIVERED, State.FAILED, State.SUMMARIZED) or running:
         raise EditError("busy", "встреча сейчас обрабатывается — попробуй, когда закончится")
     sdir = session_dir(sid)
     if not (sdir / "followup.json").exists():
@@ -113,7 +117,7 @@ def apply(con, sid: str, followup, *, resend: bool) -> dict:
     md = render_followup(new, engine=engine, title=title,
                          duration_min=stages._duration_min(row), revision=revision)
     if path.exists():
-        # прежняя ревизия остаётся на диске — Claude может её спросить обратно
+        # прежняя ревизия остаётся на диске — на случай отката вручную
         shutil.copy2(path, sdir / f"followup.r{revision - 1}.json")
     _write_atomic(path, json.dumps(new, ensure_ascii=False, indent=1))
     _write_atomic(sdir / "followup.md", md)

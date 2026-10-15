@@ -396,12 +396,37 @@ class DaemonApp:
 
     def resummarize(self, params: dict) -> dict:
         """«Пересобрать саммари» (экран 06): заново через Claude, транскрипт
-        не перегоняется."""
+        не перегоняется.
+
+        Пересборка возможна только из DELIVERED/FAILED (а также из SUMMARIZING/
+        DELIVERING — это failed_retry: сессия ещё не откатилась, но джоба не
+        бежит, см. followup_edit._check_editable). Остальные состояния и
+        активная джоба — busy с текстом по месту; без transcript.txt пересобирать
+        нечего (MCP resummarize_meeting — та же проверка, что у правки)."""
         sid = params.get("session_id")
         if not sid:
             raise ControlError("bad_params", "нужен session_id")
-        if db.get_session(self._con, sid) is None:
+        row = db.get_session(self._con, sid)
+        if row is None:
             raise ControlError("not_found", f"нет сессии {sid}")
+        if not (session_dir(sid) / "transcript.txt").exists():
+            raise ControlError("no_transcript",
+                               "расшифровки нет — сначала повтори обработку встречи")
+        running = self._con.execute(
+            "SELECT 1 FROM pipeline_jobs WHERE session_id=? AND status='running'",
+            (sid,)).fetchone()
+        if running:
+            raise ControlError("busy", "встреча сейчас обрабатывается — попробуй, "
+                                       "когда закончится")
+        state = State(row["state"])
+        if state not in (State.DELIVERED, State.FAILED, State.SUMMARIZING, State.DELIVERING):
+            if state == State.SUMMARIZED:
+                raise ControlError("busy", "прошлая правка ещё доставляется — "
+                                           "попробуй через минуту")
+            if state in (State.DETECTED, State.RECORDING):
+                raise ControlError("busy", "идёт запись этой встречи")
+            raise ControlError("busy", "встреча сейчас обрабатывается — попробуй, "
+                                       "когда закончится")
         # Доставки сбрасываются — прогресс Telegram тоже, иначе побайтно тот же
         # текст «уже отправлен» и сообщение не придёт. Первое старое сообщение
         # запоминаем: новая версия уйдёт ответом на него (продукт P12).
