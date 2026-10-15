@@ -28,6 +28,20 @@ class ControlError(Exception):
         self.code = code
 
 
+class DaemonUnavailable(RuntimeError):
+    """Демон не отвечает: нет сокета, отказ соединения, тайм-аут, обрыв."""
+
+
+class DaemonError(RuntimeError):
+    """Демон ответил ошибкой. code — код ControlError (busy, not_found, ...);
+    текст исключения прежний — «code: message» (daemon/cli.py печатает его)."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+
+
 class ControlServer:
     """handlers: {"method_name": fn(params: dict) -> dict}."""
 
@@ -119,31 +133,35 @@ class ControlServer:
 
 
 def request(method: str, params: dict | None = None, timeout: float = 30) -> dict:
-    """Синхронный клиент для CLI. Возвращает result, бросает RuntimeError на error."""
+    """Синхронный клиент (CLI, MCP-сервер). Возвращает result. Демон ответил
+    ошибкой — DaemonError; демон недоступен или оборвал обмен — DaemonUnavailable.
+    Оба — RuntimeError с прежними текстами."""
     sp = socket_path()
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.settimeout(timeout)
-        try:
-            s.connect(str(sp))
-        except (FileNotFoundError, ConnectionRefusedError) as exc:
-            raise RuntimeError(
-                f"демон не запущен (нет сокета {sp}) — запусти: python main.py") from exc
-        s.sendall((json.dumps({"id": 1, "method": method, "params": params or {}},
-                              ensure_ascii=False) + "\n").encode())
-        buf = b""
-        while not buf.endswith(b"\n"):
-            chunk = s.recv(65536)
-            if not chunk:
-                break
-            buf += chunk
-            # пропускаем notification-кадры (heartbeat) до нашего ответа
-            while b"\n" in buf:
-                line, _, rest = buf.partition(b"\n")
-                msg = json.loads(line)
-                if msg.get("id") == 1:
-                    if "error" in msg:
-                        raise RuntimeError(
-                            f"{msg['error']['code']}: {msg['error']['message']}")
-                    return msg.get("result", {})
-                buf = rest
-    raise RuntimeError("демон закрыл соединение без ответа")
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            try:
+                s.connect(str(sp))
+            except (FileNotFoundError, ConnectionRefusedError) as exc:
+                raise DaemonUnavailable(
+                    f"демон не запущен (нет сокета {sp}) — запусти: python main.py") from exc
+            s.sendall((json.dumps({"id": 1, "method": method, "params": params or {}},
+                                  ensure_ascii=False) + "\n").encode())
+            buf = b""
+            while not buf.endswith(b"\n"):
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                # пропускаем notification-кадры (heartbeat) до нашего ответа
+                while b"\n" in buf:
+                    line, _, rest = buf.partition(b"\n")
+                    msg = json.loads(line)
+                    if msg.get("id") == 1:
+                        if "error" in msg:
+                            raise DaemonError(msg["error"]["code"], msg["error"]["message"])
+                        return msg.get("result", {})
+                    buf = rest
+    except OSError as exc:  # тайм-аут, BrokenPipe на sendall, сброс соединения
+        raise DaemonUnavailable(f"демон не отвечает: {exc}") from exc
+    raise DaemonUnavailable("демон закрыл соединение без ответа")

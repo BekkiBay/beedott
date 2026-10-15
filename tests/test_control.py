@@ -1,9 +1,11 @@
 """Тесты control-сокета: сервер в потоке, синхронный клиент."""
 import tempfile
+import time
 
 import pytest
 
-from daemon.control import ControlError, ControlServer, request
+from daemon.control import (ControlError, ControlServer, DaemonError,
+                            DaemonUnavailable, request)
 
 
 @pytest.fixture()
@@ -19,6 +21,7 @@ def server(monkeypatch):
         "health": lambda params: {"ok": True},
         "echo": lambda params: {"got": params},
         "boom": boom,
+        "slow": lambda params: time.sleep(0.5) or {},
     })
     srv.start()
     return srv
@@ -37,3 +40,23 @@ def test_unknown_method(server):
 def test_control_error(server):
     with pytest.raises(RuntimeError, match="busy"):
         request("boom")
+
+
+def test_no_socket_is_daemon_unavailable(monkeypatch):
+    monkeypatch.setenv("MEETMIND_APPDIR", tempfile.mkdtemp(prefix="mm", dir="/tmp"))
+    with pytest.raises(DaemonUnavailable, match="демон не запущен"):
+        request("health")
+
+
+def test_error_reply_is_daemon_error_with_code(server):
+    with pytest.raises(DaemonError) as exc:
+        request("boom")
+    assert exc.value.code == "busy"
+    assert exc.value.message == "уже пишем"
+    assert isinstance(exc.value, RuntimeError)
+    assert str(exc.value) == "busy: уже пишем"  # прежний текст для cli.py
+
+
+def test_timeout_is_daemon_unavailable(server):
+    with pytest.raises(DaemonUnavailable):
+        request("slow", timeout=0.1)
