@@ -16,6 +16,7 @@ dependencies = [
   "huggingface_hub>=1.0",
   "imageio-ffmpeg>=0.6",
   "mcp>=2.3,<3",
+  "silero-vad>=6.2 ; platform_machine == 'arm64'",
 ]
 
 [dependency-groups]

@@ -179,3 +179,201 @@ def test_transcribe_stereo_without_speech_returns_empty_list(tmp_path, monkeypat
     monkeypatch.setattr(Transcriber, "__init__", lambda self, **kw: None)
     monkeypatch.setattr(Transcriber, "_transcribe_one", lambda self, p: [])
     assert Transcriber().transcribe(str(wav)) == []
+
+
+# ─── VAD: склейка кусков речи и пересчёт таймкодов ───────────────────────────
+
+
+def test_group_spans_packs_neighbours_up_to_limit():
+    from daemon.transcriber import group_spans
+    spans = [(0, 10), (20, 30), (40, 55), (60, 100)]
+    # лимит 25 сэмплов речи: 10+10 влезают, 15 — уже нет, 40 — один, сверх лимита
+    assert group_spans(spans, max_len=25) == [[(0, 10), (20, 30)], [(40, 55)], [(60, 100)]]
+
+
+def test_group_spans_empty():
+    from daemon.transcriber import group_spans
+    assert group_spans([], max_len=25) == []
+
+
+def test_concat_spans_and_restore_time_map_back_to_original_timeline():
+    import numpy as np
+    from daemon.transcriber import concat_spans, restore_time
+    sr = 16000
+    audio = np.arange(10 * sr, dtype=np.float32)
+    # речь 1–2 с и 5–7 с; в склейке это 0–1 с и 1–3 с
+    chunk, mapping = concat_spans(audio, [(1 * sr, 2 * sr), (5 * sr, 7 * sr)])
+    assert len(chunk) == 3 * sr
+    assert chunk[0] == audio[1 * sr] and chunk[1 * sr] == audio[5 * sr]
+    assert restore_time(0.5, mapping) == 1.5
+    assert restore_time(1.5, mapping) == 5.5
+    assert restore_time(3.0, mapping) == 7.0
+    assert restore_time(9.0, mapping) == 7.0  # хвост за пределами склейки — конец речи
+
+
+def test_transcribe_one_decodes_each_speech_group_with_prompt(tmp_path, monkeypatch):
+    """Словарь (initial_prompt) идёт в каждый кусок речи, а не только в первое
+    30-секундное окно, и таймкоды возвращаются на шкалу исходного файла."""
+    import numpy as np
+    import soundfile as sf
+    from daemon import transcriber as tr
+    sr = 16000
+    wav = tmp_path / "mic.wav"
+    sf.write(str(wav), np.zeros(80 * sr, dtype="float32"), sr)
+    monkeypatch.setattr(tr, "speech_spans",
+                        lambda audio: [(10 * sr, 30 * sr), (50 * sr, 70 * sr)])
+    calls = []
+
+    def fake_decode(self, audio, prompt):
+        calls.append((len(audio), prompt))
+        return [{"start": 1.0, "end": 2.0, "text": f"кусок {len(calls)}",
+                 "no_speech_prob": 0.0}]
+
+    t = tr.Transcriber.__new__(tr.Transcriber)
+    t.initial_prompt = "Grafana, roadmap."
+    t.terms = ["Grafana", "roadmap"]
+    t.use_vad = True
+    monkeypatch.setattr(tr.Transcriber, "_decode", fake_decode)
+
+    segs = t._transcribe_one(str(wav))
+
+    assert calls == [(20 * sr, "Grafana, roadmap."), (20 * sr, "Grafana, roadmap.")]
+    assert segs == [{"start": 11.0, "end": 12.0, "text": "кусок 1"},
+                    {"start": 51.0, "end": 52.0, "text": "кусок 2"}]
+
+
+def test_transcribe_one_without_speech_returns_empty(tmp_path, monkeypatch):
+    import numpy as np
+    import soundfile as sf
+    from daemon import transcriber as tr
+    wav = tmp_path / "mic.wav"
+    sf.write(str(wav), np.zeros(16000, dtype="float32"), 16000)
+    monkeypatch.setattr(tr, "speech_spans", lambda audio: [])
+    t = tr.Transcriber.__new__(tr.Transcriber)
+    t.initial_prompt = None
+    t.terms = []
+    t.use_vad = True
+    monkeypatch.setattr(tr.Transcriber, "_decode",
+                        lambda self, a, p: pytest.fail("тишину не декодируем"))
+    assert t._transcribe_one(str(wav)) == []
+
+
+# ─── фильтр выдуманных фраз ──────────────────────────────────────────────────
+
+
+def test_filter_hallucinations_drops_whisper_credits_and_silence_thanks():
+    from daemon.transcriber import filter_hallucinations
+    segs = [
+        {"start": 0, "end": 1, "text": "Продолжение следует...", "no_speech_prob": 0.1},
+        {"start": 1, "end": 2, "text": "Субтитры сделал DimaTorzok", "no_speech_prob": 0.1},
+        {"start": 2, "end": 3, "text": "Спасибо.", "no_speech_prob": 0.6},
+        {"start": 3, "end": 4, "text": "Спасибо.", "no_speech_prob": 0.05},
+        {"start": 4, "end": 5, "text": "Давайте по релизу.", "no_speech_prob": 0.0},
+    ]
+    kept = filter_hallucinations(segs, terms=[])
+    assert [s["text"] for s in kept] == ["Спасибо.", "Давайте по релизу."]
+
+
+def test_filter_hallucinations_drops_glossary_echo_and_collapses_loops():
+    from daemon.transcriber import filter_hallucinations
+    terms = ["Grafana", "roadmap", "SLA", "backlog", "Kubernetes"]
+    segs = [
+        {"start": 0, "end": 1, "text": "Grafana, roadmap, SLA, backlog, Kubernetes."},
+        {"start": 1, "end": 2, "text": "Мы обновили Grafana, разобрали roadmap, backlog и SLA на месте."},
+        {"start": 2, "end": 3, "text": "да да да да да да"},
+    ]
+    kept = filter_hallucinations(segs, terms=terms)
+    assert [s["text"] for s in kept] == [
+        "Мы обновили Grafana, разобрали roadmap, backlog и SLA на месте.", "да да"]
+
+
+# ─── словарь терминов ────────────────────────────────────────────────────────
+
+
+def test_load_glossary_skips_comments_and_blanks(tmp_path):
+    from daemon.transcriber import load_glossary
+    f = tmp_path / "terms.txt"
+    f.write_text("# комментарий\nGrafana\n\n  Load Balancer  \nClaude\n", encoding="utf-8")
+    assert load_glossary(f) == ["Grafana", "Load Balancer", "Claude"]
+    assert load_glossary(tmp_path / "нет.txt") == []
+
+
+def test_glossary_prompt_is_terms_only():
+    """Служебные слова («Термины:») модель дописывает в начало расшифровки,
+    поэтому в подсказке только сами термины."""
+    from daemon.transcriber import glossary_prompt
+    assert glossary_prompt(["Grafana", "Claude"]) == "Grafana, Claude."
+    assert glossary_prompt([]) is None
+
+
+# ─── эхо: голоса собеседников из динамиков попадают в микрофон ───────────────
+
+
+def test_drop_echo_removes_mic_copy_of_system_speech():
+    from daemon.transcriber import drop_echo
+    sys_segs = [
+        {"start": 17.0, "end": 26.0,
+         "text": "Давай, наверное, Миша, расскажи, что там тебе осталось по продукту?"},
+        {"start": 27.0, "end": 37.0, "text": "Да, мне осталось поправить отчёт и выкатить."},
+    ]
+    mic_segs = [
+        # эхо: тот же текст с ошибками распознавания, сдвиг по времени
+        {"start": 15.0, "end": 25.0,
+         "text": "Так, давай, наверное, Мища, расскажи, что там тебе осталось по продукту"},
+        # своя реплика в то же время — другой текст
+        {"start": 27.5, "end": 30.0, "text": "Подожди, а метрики уже посчитали?"},
+        # своё короткое «да» не совпадает по времени с чужим — остаётся
+        {"start": 40.0, "end": 40.5, "text": "Да."},
+    ]
+    kept = drop_echo(mic_segs, sys_segs)
+    assert [s["text"] for s in kept] == ["Подожди, а метрики уже посчитали?", "Да."]
+
+
+def test_drop_echo_short_phrase_dropped_only_on_exact_same_time():
+    from daemon.transcriber import drop_echo
+    sys_segs = [{"start": 10.0, "end": 10.6, "text": "Вот."}]
+    mic_echo = [{"start": 10.3, "end": 10.9, "text": "Вот"}]
+    mic_late = [{"start": 14.0, "end": 14.5, "text": "Вот."}]
+    assert drop_echo(mic_echo, sys_segs) == []
+    assert drop_echo(mic_late, sys_segs) == mic_late
+
+
+def test_transcribe_stereo_drops_echo_from_mic(tmp_path, monkeypatch):
+    from daemon.transcriber import Transcriber
+    wav = tmp_path / "audio.wav"
+    _write_stereo_wav(wav)
+
+    def fake_one(self, audio_path):
+        if "mic" in audio_path:
+            return [{"start": 0.0, "end": 2.0, "text": "привет, начнём"},
+                    {"start": 2.6, "end": 5.4, "text": "давайте по релизу"}]
+        return [{"start": 2.5, "end": 5.5, "text": "давайте по релизу"}]
+
+    monkeypatch.setattr(Transcriber, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Transcriber, "_transcribe_one", fake_one)
+
+    segments = Transcriber().transcribe(str(wav))
+    assert [(s["speaker"], s["text"]) for s in segments] == [
+        ("Спикер 1", "привет, начнём"), ("Спикер 2", "давайте по релизу")]
+
+
+def test_drop_echo_keeps_own_phrase_whose_words_are_scattered_in_long_system_text():
+    """Своя короткая реплика не эхо, даже если её слова по отдельности есть в
+    длинной реплике собеседника рядом."""
+    from daemon.transcriber import drop_echo
+    sys_segs = [{"start": 10.0, "end": 30.0,
+                 "text": "Смотри, альфа у нас стоит старая, а вот бета уже новая, "
+                         "и мы это обсуждали, да, на прошлой неделе"}]
+    mic_segs = [{"start": 20.0, "end": 21.0, "text": "Альфа-бета, да?"},
+                {"start": 22.0, "end": 23.5, "text": "Ну это мы на неделе решим"}]
+    assert drop_echo(mic_segs, sys_segs) == mic_segs
+
+
+def test_filter_hallucinations_drops_foreign_script_garbage():
+    """На шуме Whisper выдаёт кашу из разных алфавитов; при language=ru
+    иероглифы и хангыль — всегда мусор. Латиница с русскими окончаниями — нет."""
+    from daemon.transcriber import filter_hallucinations
+    segs = [{"start": 0, "end": 1, "text": "показываешьмоANE Ske государству석 144ほど"},
+            {"start": 1, "end": 2, "text": "Grafanу подняли, SLAшка не горит, Ü-образно."}]
+    assert [s["text"] for s in filter_hallucinations(segs, terms=[])] == [
+        "Grafanу подняли, SLAшка не горит, Ü-образно."]
